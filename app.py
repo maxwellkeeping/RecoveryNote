@@ -61,11 +61,22 @@ def init_db():
         """)
 
 
-# Initialise on worker startup — log a warning if the DB is unreachable
-try:
-    init_db()
-except Exception as _db_err:
-    print(f"WARNING: database init failed: {_db_err}", file=sys.stderr)
+_db_initialized = False
+
+
+@app.before_request
+def ensure_db():
+    """Lazily initialise the database on the first request instead of at
+    startup so a slow or temporarily-unavailable database does not prevent
+    the gunicorn worker from booting.
+    """
+    global _db_initialized
+    if not _db_initialized:
+        try:
+            init_db()
+            _db_initialized = True
+        except Exception as _db_err:
+            print(f"WARNING: database init failed: {_db_err}", file=sys.stderr)
 
 
 def sanitize_name(s):
