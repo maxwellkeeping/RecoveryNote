@@ -1,0 +1,37 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# App data — never commit live data or generated files
+submissions.json
+generated_*.docx
+generated_*.zip
+uploads/
+
+# Dev / one-off scripts
+check_syntax.py
+test_import.py
+tools/inspect_*.py
+tools/extract_colors.py
+tools/check_id.py
+tools/dump_select.py
+tools/inspect_load.py
+
+# Office temp files
+~$*
+
+# Project reference docs (not needed at runtime)
+NOTES.md
+Field_Groupings.md
+Field_Groupings.docx
+*.xlsx
+
+# Docker (replaced by App Service)
+Dockerfile
+.dockerignore
+
+# Bicep secrets — copy main.sample.bicepparam → main.bicepparam and fill in values
+infra/main.bicepparam

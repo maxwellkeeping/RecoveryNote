@@ -1,0 +1,159 @@
+{
+  "sheet": "Financial Agreements",
+  "headers": [
+    "AGREEMENT ID",
+    "AGREEMENT NAME / DESCRIPTION",
+    "STATUS",
+    "AGREEMENT TYPE",
+    "PREVIOUS AGREEMENT #",
+    "ONE-TIME",
+    "ANNUAL",
+    "MONTHLY RECURRING",
+    "START DATE\n(YYYY-MM-DD)",
+    "END DATE\n(YYYY-MM-DD)",
+    "FISCAL YEAR # MONTHS",
+    "TOTAL RECOVERY \\$",
+    "AGREEMENT # MONTHS (optional)",
+    "MONTH BILLED",
+    "NEXT FISCAL RENEWAL",
+    "ACTIVE \\$ CARRY TO NEXT FY",
+    "COMMENTS",
+    "SERVICE OWNER",
+    "ITS\n SERVICE",
+    "ITS\nSERVICE TYPE",
+    "AGREEMENT AUTHOR",
+    "SOLUTION CI",
+    "IFIS CODE",
+    "SERVICE OWNER CONTACT NAME",
+    "CLIENT \nCONTACT NAME",
+    "eApprovals Package ID (253-YYYY-####)"
+  ],
+  "sample_row": {
+    "AGREEMENT ID": null,
+    "AGREEMENT NAME / DESCRIPTION": null,
+    "STATUS": null,
+    "AGREEMENT TYPE": null,
+    "PREVIOUS AGREEMENT #": null,
+    "ONE-TIME": null,
+    "ANNUAL": null,
+    "MONTHLY RECURRING": null,
+    "START DATE\n(YYYY-MM-DD)": null,
+    "END DATE\n(YYYY-MM-DD)": null,
+    "FISCAL YEAR # MONTHS": null,
+    "TOTAL RECOVERY \\$": null,
+    "AGREEMENT # MONTHS (optional)": null,
+    "MONTH BILLED": null,
+    "NEXT FISCAL RENEWAL": null,
+    "ACTIVE \\$ CARRY TO NEXT FY": null,
+    "COMMENTS": null,
+    "SERVICE OWNER": "DCO Business Services",
+    "ITS\n SERVICE": "PROCUREMENT-SOFTWARE",
+    "ITS\nSERVICE TYPE": "SOFTWARE-ORACLE",
+    "AGREEMENT AUTHOR": null,
+    "SOLUTION CI": null,
+    "IFIS CODE": null,
+    "SERVICE OWNER CONTACT NAME": null,
+    "CLIENT \nCONTACT NAME": null,
+    "eApprovals Package ID (253-YYYY-####)": null
+  },
+  "groups": {
+    "Agreement Details": [
+      "AGREEMENT ID",
+      "AGREEMENT NAME / DESCRIPTION",
+      "CLIENT \nCONTACT NAME",
+      "AGREEMENT TYPE",
+      "PREVIOUS AGREEMENT #",
+      "AGREEMENT AUTHOR",
+      "eApprovals Package ID (253-YYYY-####)",
+      "STATUS"
+    ],
+    "Financials": [
+      "START DATE\n(YYYY-MM-DD)",
+      "END DATE\n(YYYY-MM-DD)",
+      "ONE-TIME",
+      "ANNUAL",
+      "MONTHLY RECURRING",
+      "FISCAL YEAR # MONTHS",
+      "TOTAL RECOVERY \\$",
+      "AGREEMENT # MONTHS (optional)",
+      "MONTH BILLED",
+      "NEXT FISCAL RENEWAL",
+      "ACTIVE \\$ CARRY TO NEXT FY"
+    ],
+    "Service Info": [
+      "SERVICE OWNER",
+      "ITS\n SERVICE",
+      "ITS\nSERVICE TYPE",
+      "SOLUTION CI",
+      "IFIS CODE",
+      "SERVICE OWNER CONTACT NAME"
+    ],
+    "Other": [
+      "COMMENTS"
+    ]
+  },
+  "proposed_mandatory": [
+    "AGREEMENT ID",
+    "AGREEMENT NAME / DESCRIPTION",
+    "AGREEMENT TYPE",
+    "AGREEMENT AUTHOR",
+    "STATUS"
+  ],
+  "field_hints": {
+    "AGREEMENT ID": {
+      "placeholder": "e.g. GSIC-20260401-RN50027001",
+      "hint": "Format: {Cluster Abbr}-{YYYYMMDD}-RN{Cluster #}{FY End YY}{3-digit ID}",
+      "compound": "agreement_id"
+    },
+    "START DATE (YYYY-MM-DD)": {
+      "input_type": "date"
+    },
+    "END DATE (YYYY-MM-DD)": {
+      "input_type": "date"
+    },
+    "FISCAL YEAR # MONTHS": {
+      "input_type": "number",
+      "min": "1",
+      "max": "12",
+      "placeholder": "1 – 12"
+    },
+    "AGREEMENT # MONTHS (optional)": {
+      "input_type": "number",
+      "min": "1",
+      "max": "12",
+      "placeholder": "1 – 12"    },
+    "ONE-TIME": {
+      "input_type": "number",
+      "min": "0",
+      "step": "0.01",
+      "placeholder": "0.00"
+    },
+    "ANNUAL": {
+      "input_type": "number",
+      "min": "0",
+      "step": "0.01",
+      "placeholder": "0.00"
+    },
+    "MONTHLY RECURRING": {
+      "input_type": "number",
+      "min": "0",
+      "step": "0.01",
+      "placeholder": "0.00"
+    },
+    "TOTAL RECOVERY \\$": {
+      "input_type": "number",
+      "min": "0",
+      "step": "0.01",
+      "placeholder": "0.00"
+    },
+    "ACTIVE \\$ CARRY TO NEXT FY": {
+      "input_type": "number",
+      "min": "0",
+      "step": "0.01",
+      "placeholder": "0.00"    },
+    "IFIS CODE": {
+      "placeholder": "000-000000-0000-000000-0000",
+      "input_mask": "000-000000-0000-000000-0000"
+    }
+  }
+}

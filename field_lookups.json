@@ -1,0 +1,181 @@
+{
+  "CLIENT CLUSTER": [
+    "Central Agencies Cluster (CAC) - 100",
+    "Community Services Cluster (CSC) - 200",
+    "Children, Youth & Social Services Cluster (CYSSC) - 300",
+    "Labour and Transportation Cluster (LTC) - 400",
+    "Government Services Integration Cluster (GSIC) - 500",
+    "Health Services Cluster (HSC) - 600",
+    "Justice Technology Services (JTS) - 700",
+    "Land and Resources Cluster (LRC) - 800",
+    "GovTech ON - Cyber Security (CSD) - 900",
+    "GovTech ON - Technology Policy & Standards Development (TPSD) - 900"
+  ],
+  "CI #": [
+    "n/a",
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "STATUS": [
+    "To be Drafted",
+    "Pending Approvals",
+    "Approved",
+    "Billed",
+    "Recurring Billing in Progress",
+    "On-Hold",
+    "Cancelled"
+  ],
+  "AGREEMENT TYPE": [
+    "Net New",
+    "Pass-Thru - Capital",
+    "Pass-Thru - Annual",
+    "Renewal",
+    "IPD - Other",
+    "Credit Adjustment"
+  ],
+  "SERVER OWNER": [
+    "DCO Business Services",
+    "DCO Mainframe/DR",
+    "Desktop Services",
+    "Telecom"
+  ],
+  "# FISCAL MONTHS": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "11",
+    "12"
+  ],
+  "BDS MONTH": [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sept",
+    "Oct",
+    "Nov",
+    "Dec",
+    "n/a"
+  ],
+  "FY RENEWAL": [
+    "Yes",
+    "No"
+  ],
+  "ACTIVE CARRY TO NEXT FY": [
+    "Yes",
+    "No"
+  ],
+  "_cascade_fields": {
+    "ITS SERVICE TYPE": "ITS  SERVICE"
+  },
+  "SERVICE": {
+    "PROCUREMENT-SOFTWARE": [
+      "SOFTWARE- MS SCE -IN YEAR PURCHASE",
+      "SOFTWARE- MS SCE - SERVER CLOUD ENROLMENT",
+      "SOFTWARE- MS SELECT PLUS SA",
+      "SOFTWARE- MS SELECT PLUS SA -IN YEAR PURCHASE",
+      "SOFTWARE-ORACLE",
+      "SOFTWARE-OTHER PUBLISHER",
+      "SOFTWARE-TOPAZ",
+      "SOFTWARE-HCL"
+    ],
+    "PROCUREMENT-HARDWARE": [
+      "3rd PARTY SERVICES",
+      "CAPITAL CHARGES",
+      "HARDWARE (NON-CAPITAL)",
+      "OFF WARRANTY MAINTENANCE"
+    ],
+    "AHS-CUSTOM": [
+      "ITS SERVICE & SUPPORT"
+    ],
+    "AHS-SERVICE OPTION": [
+      "ENTERPRISE CITRIX - CITRIX SUPPORT",
+      "MONITORING-APM (CUSTOM)",
+      "OFF-SITE VAULTING",
+      "PERFORMANCE AND LOAD TESTING",
+      "XML GATEWAY SUPPORT",
+      "HOURLY RATE - MIDDLEWARE SUPPORT",
+      "HOURLY RATE - ON CALL SUPPORT",
+      "HOURLY RATE -  DATABASE SUPPORT",
+      "RAISED FLOOR SPACE",
+      "MANAGED DATACENTRE ACCESS SUBSCRIPTION (MDAS)"
+    ],
+    "PUBLIC CLOUD": [
+      "SOFTLAYER",
+      "DCO SHAREPOINT ONLINE BUILD DESIGN SERVICES",
+      "DCO SHAREPOINT ONLINE MIGRATION SERVICES",
+      "SOFTWARE-PIVOTAL APPLICATION SERVICE SUBSCRIPTION",
+      "SOFTWARE-OTHER PUBLISHER",
+      "OTHER SERVICES",
+      "SOFTWARE-MS POWER BI PREMIUM NODE"
+    ],
+    "FILE & PRINT SERVICE": [
+      "COMMON SHARE",
+      "COMMON SHARE - ADDITIONAL STORAGE",
+      "HOME SHARE"
+    ],
+    "MAINFRAME": [
+      "MAINFRAME"
+    ],
+    "DISASTER RECOVERY": [
+      "DISASTER RECOVERY"
+    ],
+    "DESKTOP SERVICES": [
+      "DS GENERAL"
+    ]
+  },
+  "AUTHOR": [
+    "Adriano C",
+    "Alex L",
+    "Asif B",
+    "Cary L",
+    "Chris H",
+    "Fareed E",
+    "George G",
+    "Hugh M",
+    "IPD",
+    "Isham B",
+    "Jeff I",
+    "Jeff L",
+    "Jennifer S",
+    "Juvraj D",
+    "Karen F",
+    "Keith B",
+    "Kevin B",
+    "Kevin Z",
+    "Luciano C",
+    "Max K",
+    "Michelle D",
+    "Patricia C",
+    "Pauline B",
+    "Quincy R",
+    "Steven Lai",
+    "Tushar G",
+    "Xiomara S"
+  ],
+  "LOOK-UP NAME": [
+    "PROCUREMENTSW",
+    "PROCUREMENTHW",
+    "AHSCUSTOM",
+    "SERVICEOPTION",
+    "PUBLICCLOUD",
+    "FILEPRINT",
+    "MAINFRAME",
+    "DISASTER",
+    "DESKTOP"
+  ]
+}
