@@ -19,7 +19,9 @@ FG_PATH = os.path.join(_DATA_DIR, 'field_groups.json')
 LOOKUP_PATH = os.path.join(_DATA_DIR, 'field_lookups.json')
 LOOKUP_MAP = os.path.join(_DATA_DIR, 'lookup_mappings.json')
 
-# PostgreSQL connection string — set DATABASE_URL in environment
+# PostgreSQL connection string — set DATABASE_URL in environment.
+# Read dynamically on each call so Key Vault references that resolve after
+# startup are picked up, and so a missing value at boot doesn't crash the app.
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
 app = Flask(__name__)
@@ -31,7 +33,8 @@ app.jinja_env.globals['sanitize_name'] = lambda s: re.sub(r"[^0-9A-Za-z]+", '_',
 @contextmanager
 def db_cursor():
     """Yield a psycopg2 cursor; commits on clean exit, rolls back on error."""
-    conn = psycopg2.connect(DATABASE_URL)
+    dsn = os.environ.get('DATABASE_URL') or DATABASE_URL
+    conn = psycopg2.connect(dsn, connect_timeout=10)
     try:
         cur = conn.cursor()
         try:
