@@ -77,7 +77,6 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: 'PYTHON|3.12'
-      appCommandLine: 'gunicorn --bind=0.0.0.0 --timeout=120 --workers=2 app:app'
       alwaysOn: false      // required for F1 Free tier
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
