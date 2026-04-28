@@ -105,55 +105,114 @@
       "hint": "Format: {Cluster Abbr}-{YYYYMMDD}-RN{Cluster #}{FY End YY}{3-digit ID}",
       "compound": "agreement_id"
     },
+    "AGREEMENT NAME / DESCRIPTION": {
+      "display_label": "Agreement Name / Description"
+    },
+    "CLIENT \nCONTACT NAME": {
+      "display_label": "Client Contact Name"
+    },
+    "AGREEMENT TYPE": {
+      "display_label": "Agreement Type"
+    },
+    "PREVIOUS AGREEMENT #": {
+      "display_label": "Previous Agreement #"
+    },
+    "AGREEMENT AUTHOR": {
+      "display_label": "Agreement Author"
+    },
+    "eApprovals Package ID (253-YYYY-####)": {
+      "display_label": "eApprovals Package ID",
+      "placeholder": "253-YYYY-####"
+    },
+    "STATUS": {
+      "display_label": "Status"
+    },
     "START DATE (YYYY-MM-DD)": {
-      "input_type": "date"
+      "input_type": "date",
+      "display_label": "Start Date"
     },
     "END DATE (YYYY-MM-DD)": {
-      "input_type": "date"
+      "input_type": "date",
+      "display_label": "End Date"
     },
     "FISCAL YEAR # MONTHS": {
       "input_type": "number",
       "min": "1",
       "max": "12",
-      "placeholder": "1 – 12"
+      "placeholder": "1 – 12",
+      "display_label": "Fiscal Year # Months"
     },
     "AGREEMENT # MONTHS (optional)": {
       "input_type": "number",
       "min": "1",
       "max": "12",
-      "placeholder": "1 – 12"    },
+      "placeholder": "1 – 12",
+      "display_label": "Agreement # Months"
+    },
     "ONE-TIME": {
       "input_type": "number",
       "min": "0",
       "step": "0.01",
-      "placeholder": "0.00"
+      "placeholder": "0.00",
+      "display_label": "One-Time"
     },
     "ANNUAL": {
       "input_type": "number",
       "min": "0",
       "step": "0.01",
-      "placeholder": "0.00"
+      "placeholder": "0.00",
+      "display_label": "Annual"
     },
     "MONTHLY RECURRING": {
       "input_type": "number",
       "min": "0",
       "step": "0.01",
-      "placeholder": "0.00"
+      "placeholder": "0.00",
+      "display_label": "Monthly Recurring"
     },
     "TOTAL RECOVERY \\$": {
       "input_type": "number",
       "min": "0",
       "step": "0.01",
-      "placeholder": "0.00"
+      "placeholder": "0.00",
+      "display_label": "Total Recovery $"
     },
     "ACTIVE \\$ CARRY TO NEXT FY": {
       "input_type": "number",
       "min": "0",
       "step": "0.01",
-      "placeholder": "0.00"    },
+      "placeholder": "0.00",
+      "display_label": "Active $ Carry to Next FY"
+    },
+    "MONTH BILLED": {
+      "display_label": "Month Billed"
+    },
+    "NEXT FISCAL RENEWAL": {
+      "display_label": "Next Fiscal Renewal"
+    },
+    "SERVICE OWNER": {
+      "display_label": "Service Owner"
+    },
+    "ITS\n SERVICE": {
+      "display_label": "ITS Service"
+    },
+    "ITS\nSERVICE TYPE": {
+      "display_label": "ITS Service Type"
+    },
+    "SOLUTION CI": {
+      "display_label": "Solution CI"
+    },
+    "SERVICE OWNER CONTACT NAME": {
+      "display_label": "Service Owner Contact"
+    },
+    "COMMENTS": {
+      "display_label": "Comments",
+      "input_type": "textarea"
+    },
     "IFIS CODE": {
       "placeholder": "000-000000-0000-000000-0000",
-      "input_mask": "000-000000-0000-000000-0000"
+      "input_mask": "000-000000-0000-000000-0000",
+      "display_label": "IFIS Code (Cost Centre)"
     }
   }
 }

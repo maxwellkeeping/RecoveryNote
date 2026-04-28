@@ -138,7 +138,7 @@ def load_field_groups():
                 options = [_fix_govtech(x) for x in options]
             hint_data = field_hints.get(label, {})
             items.append({
-                'label': label,
+                'label': hint_data.get('display_label', label),
                 'name': sanitize_name(h),
                 'required': h in mandatory,
                 'options': options,

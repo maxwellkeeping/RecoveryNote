@@ -85,6 +85,8 @@
       }
       .nav-link-back:hover { color: #156082; text-decoration: underline; }
       .masked-input { font-family: 'Courier New', monospace; letter-spacing: 1px; }
+      .input-group-text { background: #f7f9fc; border-color: #d1dbe8; color: #555; font-weight: 500; }
+      textarea.form-control { resize: vertical; }
     </style>
   </head>
   <body>
@@ -120,7 +122,7 @@
             <div class="card-body">
               <div class="row g-3">
                 {% for it in items %}
-                  <div class="{% if it.compound == 'agreement_id' %}col-12{% else %}col-md-6{% endif %}">
+                  <div class="{% if it.compound == 'agreement_id' or it.input_type == 'textarea' %}col-12{% else %}col-md-6{% endif %}">
                     <label class="form-label" for="field-{{ it.name }}">
                       {{ it.label }}{% if it.required %} <span class="text-danger">*</span>{% endif %}
                     </label>
@@ -205,6 +207,20 @@
                              value="{{ values.get(it.name, '') }}"
                              {% if it.required %}required{% endif %}>
 
+                    {% elif it.input_type == 'number' and it.input_step == '0.01' %}
+                      {# Currency field with $ prefix #}
+                      <div class="input-group">
+                        <span class="input-group-text" style="font-size:.85rem">$</span>
+                        <input type="number" name="{{ it.name }}" id="field-{{ it.name }}"
+                               class="form-control"
+                               placeholder="{{ it.placeholder or '0.00' }}"
+                               value="{{ values.get(it.name, '') }}"
+                               {% if it.input_min %}min="{{ it.input_min }}"{% endif %}
+                               {% if it.input_max %}max="{{ it.input_max }}"{% endif %}
+                               step="0.01"
+                               {% if it.required %}required{% endif %}>
+                      </div>
+
                     {% elif it.input_type == 'number' %}
                       <input type="number" name="{{ it.name }}" id="field-{{ it.name }}"
                              class="form-control"
@@ -214,6 +230,12 @@
                              {% if it.input_max %}max="{{ it.input_max }}"{% endif %}
                              {% if it.input_step %}step="{{ it.input_step }}"{% endif %}
                              {% if it.required %}required{% endif %}>
+
+                    {% elif it.input_type == 'textarea' %}
+                      <textarea name="{{ it.name }}" id="field-{{ it.name }}"
+                                class="form-control" rows="3"
+                                placeholder="{{ it.placeholder or '' }}"
+                                {% if it.required %}required{% endif %}>{{ values.get(it.name, '') }}</textarea>
 
                     {% else %}
                       <input type="text" name="{{ it.name }}" id="field-{{ it.name }}"
@@ -234,22 +256,27 @@
         {% endfor %}
 
         <!-- Action buttons -->
-        <div class="d-flex flex-wrap gap-2 mt-3 mb-4">
-          <button type="submit" class="btn btn-submit">
-            {% if edit_index %}Update Agreement{% else %}Save Agreement{% endif %}
-          </button>
-          {% if edit_index %}
-            <a href="{{ url_for('generate', id=edit_index) }}" class="btn btn-generate">
-              ⬇ Generate Document
-            </a>
-          {% endif %}
-          <button type="submit" formaction="{{ url_for('submit') }}" formmethod="post"
-                  class="btn btn-generate" name="_action" value="save_and_generate"
-                  {% if edit_index %}style="display:none"{% endif %}>
-            💾 Save &amp; Generate Document
-          </button>
-          <a href="{{ url_for('track') }}" class="btn btn-outline-secondary">Cancel</a>
+        <div class="section-card">
+          <div class="card-body py-3">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <button type="submit" class="btn btn-submit">
+                {% if edit_index %}Update Agreement{% else %}Save Agreement{% endif %}
+              </button>
+              {% if edit_index %}
+                <a href="{{ url_for('generate', id=edit_index) }}" class="btn btn-generate">
+                  ⬇ Generate Document
+                </a>
+              {% else %}
+                <button type="submit" formaction="{{ url_for('submit') }}" formmethod="post"
+                        class="btn btn-generate" name="_action" value="save_and_generate">
+                  💾 Save &amp; Generate Document
+                </button>
+              {% endif %}
+              <a href="{{ url_for('track') }}" class="btn btn-outline-secondary ms-auto">Cancel</a>
+            </div>
+          </div>
         </div>
+        <div class="mb-4"></div>
       </form>
     </div>
 
