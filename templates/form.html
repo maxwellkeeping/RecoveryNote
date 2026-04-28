@@ -1,116 +1,14 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Recovery Note — {% if edit_index %}Edit{% else %}New{% endif %} Agreement</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    <style>
-      body { font-family: 'Inter', sans-serif; background: #f0f4f8; }
-      .page-header {
-        background: linear-gradient(135deg, #0E2841 0%, #156082 100%);
-        color: #fff;
-        padding: 1.5rem 2rem;
-        border-radius: 12px;
-        margin-bottom: 1.75rem;
-        box-shadow: 0 4px 14px rgba(14,40,65,.3);
-      }
-      .page-header h1 { font-size: 1.6rem; font-weight: 600; margin: 0; letter-spacing: .3px; }
-      .page-header p  { margin: .25rem 0 0; font-size: .85rem; opacity: .8; }
-      .section-card {
-        background: #fff;
-        border: none;
-        border-radius: 10px;
-        box-shadow: 0 2px 8px rgba(0,0,0,.07);
-        margin-bottom: 1.25rem;
-        overflow: hidden;
-      }
-      .section-card .card-header {
-        background: #f7f9fc;
-        border-bottom: 2px solid #E8E8E8;
-        border-left: 4px solid #156082;
-        padding: .65rem 1.25rem;
-        font-size: .78rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: .8px;
-        color: #0E2841;
-      }
-      .section-card .card-body { padding: 1.25rem; }
-      .form-label {
-        font-size: .8rem;
-        font-weight: 500;
-        color: #333;
-        margin-bottom: .25rem;
-      }
-      .form-label .text-danger { font-weight: 700; }
-      .form-control, .form-select {
-        font-size: .875rem;
-        border-radius: 7px;
-        border-color: #d1dbe8;
-      }
-      .form-control:focus, .form-select:focus {
-        border-color: #156082;
-        box-shadow: 0 0 0 3px rgba(21,96,130,.15);
-      }
-      .hint-text {
-        font-size: .72rem;
-        color: #6c757d;
-        margin-top: .2rem;
-      }
-      .btn-submit {
-        background: linear-gradient(135deg, #0E2841, #156082);
-        border: none;
-        color: #fff;
-        font-weight: 600;
-        border-radius: 8px;
-        padding: .6rem 1.5rem;
-      }
-      .btn-submit:hover { opacity: .88; color: #fff; }
-      .btn-generate {
-        background: linear-gradient(135deg, #1a6b30, #28a745);
-        border: none;
-        color: #fff;
-        font-weight: 600;
-        border-radius: 8px;
-        padding: .6rem 1.5rem;
-      }
-      .btn-generate:hover { opacity: .88; color: #fff; }
-      .nav-link-back {
-        font-size: .85rem;
-        color: #467886;
-        text-decoration: none;
-        font-weight: 500;
-      }
-      .nav-link-back:hover { color: #156082; text-decoration: underline; }
-      .masked-input { font-family: 'Courier New', monospace; letter-spacing: 1px; }
-      .input-group-text { background: #f7f9fc; border-color: #d1dbe8; color: #555; font-weight: 500; }
-      textarea.form-control { resize: vertical; }
-    </style>
-  </head>
-  <body>
-    <div class="container py-4" style="max-width:960px">
+{% extends "base.html" %}
 
-      <!-- Flash messages -->
-      {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-          {% for cat, msg in messages %}
-            <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
-              {{ msg }}
-              <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-          {% endfor %}
-        {% endif %}
-      {% endwith %}
+{% block title %}{% if edit_index %}Edit{% else %}New{% endif %} Agreement{% endblock %}
 
+{% block content %}
       <!-- Page header -->
       <div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
         <div>
           <h1>{% if edit_index %}Edit Agreement{% else %}New Recovery Agreement{% endif %}</h1>
           <p>{% if edit_index %}Editing record #{{ edit_index }}{% else %}Fill in the fields below to create a new recovery note{% endif %}</p>
         </div>
-        <a href="{{ url_for('track') }}" class="nav-link-back">← Back to Tracking</a>
       </div>
 
       <!-- Form -->
@@ -263,12 +161,12 @@
                 {% if edit_index %}Update Agreement{% else %}Save Agreement{% endif %}
               </button>
               {% if edit_index %}
-                <a href="{{ url_for('generate', id=edit_index) }}" class="btn btn-generate">
+                <a href="{{ url_for('generate', id=edit_index) }}" class="btn btn-generate-action">
                   ⬇ Generate Document
                 </a>
               {% else %}
                 <button type="submit" formaction="{{ url_for('submit') }}" formmethod="post"
-                        class="btn btn-generate" name="_action" value="save_and_generate">
+                        class="btn btn-generate-action" name="_action" value="save_and_generate">
                   💾 Save &amp; Generate Document
                 </button>
               {% endif %}
@@ -278,9 +176,9 @@
         </div>
         <div class="mb-4"></div>
       </form>
-    </div>
+{% endblock %}
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}
     <script>
     // ── Input mask for cost centre (IFIS CODE) ──────────────────────────────────
     document.querySelectorAll('[data-mask]').forEach(function(el) {
@@ -405,5 +303,4 @@
       });
     })();
     </script>
-  </body>
-</html>
+{% endblock %}

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}Admin{% endblock %}
+
+{% block content %}
+      <div class="page-header">
+        <h1>Administration</h1>
+        <p>Manage categories, lookups, and users</p>
+      </div>
+
+      <div class="row g-4">
+        <div class="col-md-4">
+          <div class="section-card h-100">
+            <div class="card-header">Categories & Lookups</div>
+            <div class="card-body">
+              <p class="text-muted" style="font-size:.85rem">Add or remove dropdown options for Agreement Type, Status, Service Owner, and other lookup fields.</p>
+              <a href="{{ url_for('map_lookups') }}" class="btn btn-sm btn-submit">Manage Lookups</a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="section-card h-100">
+            <div class="card-header">Users</div>
+            <div class="card-body">
+              <p class="text-muted" style="font-size:.85rem">Add or remove users who can access the application.</p>
+              <button class="btn btn-sm btn-outline-secondary" disabled>Coming Soon</button>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="section-card h-100">
+            <div class="card-header">Settings</div>
+            <div class="card-body">
+              <p class="text-muted" style="font-size:.85rem">Configure document templates, field visibility, and other system settings.</p>
+              <button class="btn btn-sm btn-outline-secondary" disabled>Coming Soon</button>
+            </div>
+          </div>
+        </div>
+      </div>
+{% endblock %}
