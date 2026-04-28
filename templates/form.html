@@ -18,9 +18,9 @@
           <div class="section-card">
             <div class="card-header">{{ group }}</div>
             <div class="card-body">
-              <div class="row g-3">
+              <div class="row g-2">
                 {% for it in items %}
-                  <div class="{% if it.compound == 'agreement_id' or it.input_type == 'textarea' %}col-12{% else %}col-md-6{% endif %}">
+                  <div class="{% if it.compound == 'agreement_id' or it.input_type == 'textarea' %}col-12{% else %}col-md-4{% endif %}">
                     <label class="form-label" for="field-{{ it.name }}">
                       {{ it.label }}{% if it.required %} <span class="text-danger">*</span>{% endif %}
                     </label>
