@@ -127,8 +127,6 @@
 
                     {% if it.compound == 'agreement_id' %}
                       {# Compound Agreement ID builder #}
-                      <input type="hidden" name="{{ it.name }}" id="field-{{ it.name }}"
-                             value="{{ values.get(it.name, '') }}">
                       <div class="compound-id-builder border rounded p-2" style="background:#f7f9fc">
                         <div class="row g-2 align-items-end">
                           <div class="col">
@@ -161,19 +159,18 @@
                             </select>
                           </div>
                           <div class="col-auto">
-                            <label class="form-label mb-0" style="font-size:.7rem">Seq #</label>
-                            <input type="text" id="aid-seq" class="form-control form-control-sm"
-                                   placeholder="001" maxlength="3" style="width:60px">
-                          </div>
-                          <div class="col-auto">
                             <button type="button" class="btn btn-sm btn-outline-primary" id="aid-compose">
                               Build ID
                             </button>
                           </div>
                         </div>
-                        <div class="mt-2" style="font-size:.82rem">
-                          <strong>Preview:</strong>
-                          <code id="aid-preview">{{ values.get(it.name, '—') }}</code>
+                        <input type="hidden" id="aid-seq" value="">
+                        <div class="mt-2">
+                          <input type="text" name="{{ it.name }}" id="field-{{ it.name }}"
+                                 class="form-control form-control-sm masked-input"
+                                 value="{{ values.get(it.name, '') }}"
+                                 placeholder="Select cluster, date & FY then click Build ID"
+                                 readonly>
                         </div>
                       </div>
 
@@ -317,14 +314,13 @@
 
     // ── Compound Agreement ID builder ────────────────────────────────────────────
     (function() {
-      var hidden   = document.getElementById('field-AGREEMENT_ID');
+      var idField  = document.getElementById('field-AGREEMENT_ID');
       var cluster  = document.getElementById('aid-cluster');
       var dateEl   = document.getElementById('aid-date');
       var fyend    = document.getElementById('aid-fyend');
       var seqEl    = document.getElementById('aid-seq');
-      var preview  = document.getElementById('aid-preview');
       var btn      = document.getElementById('aid-compose');
-      if (!hidden || !cluster) return;
+      if (!idField || !cluster) return;
 
       // Helper: extract abbr and number from cluster dropdown value "ABBR|NUM"
       function clusterParts() {
@@ -341,10 +337,9 @@
                      String(today.getDate()).padStart(2,'0');
 
       // If editing, parse existing value into sub-fields
-      if (hidden.value) {
-        var parts = hidden.value.match(/^([A-Z]+)-(\d{8})-RN(\d+?)(\d{2})(\d{3})$/);
+      if (idField.value) {
+        var parts = idField.value.match(/^([A-Z]+)-(\d{8})-RN(\d+?)(\d{2})(\d{3})$/);
         if (parts) {
-          // Find matching dropdown option by abbreviation
           var opts = cluster.options;
           for (var i = 0; i < opts.length; i++) {
             if (opts[i].value.split('|')[0] === parts[1]) {
@@ -364,21 +359,15 @@
         var fy = fyend.value.trim();
         var sq = seqEl.value.trim().padStart(3, '0');
         if (cp.abbr && d.length === 8) {
-          var id = cp.abbr + '-' + d + '-RN' + cp.num + fy + sq;
-          hidden.value = id;
-          preview.textContent = id;
-        } else {
-          preview.textContent = '(fill in all parts)';
+          idField.value = cp.abbr + '-' + d + '-RN' + cp.num + fy + sq;
         }
       }
 
-      [cluster, dateEl, fyend, seqEl].forEach(function(el) {
-        el.addEventListener('input', compose);
+      [cluster, dateEl, fyend].forEach(function(el) {
         el.addEventListener('change', compose);
       });
 
       btn.addEventListener('click', function() {
-        // Auto-fetch next sequence number from backend
         var d = dateEl.value.replace(/-/g, '');
         var cp = clusterParts();
         var fy = fyend.value.trim();
@@ -391,9 +380,6 @@
             compose();
           });
       });
-
-      // Initial preview
-      if (hidden.value) preview.textContent = hidden.value;
     })();
     </script>
   </body>
