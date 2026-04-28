@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Users{% endblock %}
+
+{% block content %}
+      <div class="page-header">
+        <h1>Manage Users</h1>
+        <p><a href="{{ url_for('admin') }}">&larr; Back to Admin</a></p>
+      </div>
+
+      <!-- Add User Form -->
+      <div class="section-card mb-4">
+        <div class="card-header">Add User</div>
+        <div class="card-body">
+          <form method="post" action="{{ url_for('admin_users_add') }}" class="row g-2 align-items-end">
+            <div class="col-sm-4">
+              <label class="form-label" for="username">Username</label>
+              <input type="text" name="username" id="username" class="form-control" required autocomplete="off">
+            </div>
+            <div class="col-sm-4">
+              <label class="form-label" for="password">Password</label>
+              <input type="password" name="password" id="password" class="form-control" required autocomplete="new-password">
+            </div>
+            <div class="col-sm-2">
+              <label class="form-label" for="role">Role</label>
+              <select name="role" id="role" class="form-select">
+                <option value="user" selected>User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div class="col-sm-2">
+              <button type="submit" class="btn btn-submit w-100">Add</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- User List -->
+      <div class="section-card">
+        <div class="card-header">Current Users</div>
+        <div class="card-body p-0">
+          <table class="table table-hover mb-0">
+            <thead>
+              <tr>
+                <th style="padding-left:1rem">Username</th>
+                <th>Role</th>
+                <th style="width:100px"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for user in users %}
+              <tr>
+                <td style="padding-left:1rem">{{ user[1] }}</td>
+                <td><span class="badge bg-{{ 'primary' if user[2] == 'admin' else 'secondary' }}">{{ user[2] }}</span></td>
+                <td>
+                  {% if user[0] != current_user.id %}
+                  <form method="post" action="{{ url_for('admin_users_delete', user_id=user[0]) }}"
+                        onsubmit="return confirm('Delete user {{ user[1] }}?')">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                  </form>
+                  {% else %}
+                  <span class="text-muted" style="font-size:.75rem">You</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+{% endblock %}

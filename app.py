@@ -489,5 +489,52 @@ def admin():
     return render_template('admin.html')
 
 
+@app.route('/admin/users')
+@admin_required
+def admin_users():
+    with db_cursor() as cur:
+        cur.execute("SELECT id, username, role FROM users ORDER BY username")
+        users = cur.fetchall()
+    return render_template('admin_users.html', users=users)
+
+
+@app.route('/admin/users/add', methods=['POST'])
+@admin_required
+def admin_users_add():
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip()
+    role = request.form.get('role', 'user')
+    if not username or not password:
+        flash('Username and password are required.', 'danger')
+        return redirect(url_for('admin_users'))
+    if role not in ('admin', 'user'):
+        role = 'user'
+    try:
+        with db_cursor() as cur:
+            cur.execute(
+                "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)",
+                (username, hash_password(password), role)
+            )
+        flash(f'User "{username}" created.', 'success')
+    except Exception:
+        flash(f'Could not create user "{username}" (may already exist).', 'danger')
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/delete/<int:user_id>', methods=['POST'])
+@admin_required
+def admin_users_delete(user_id):
+    if user_id == current_user.id:
+        flash('You cannot delete your own account.', 'danger')
+        return redirect(url_for('admin_users'))
+    try:
+        with db_cursor() as cur:
+            cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        flash('User deleted.', 'success')
+    except Exception:
+        flash('Could not delete user.', 'danger')
+    return redirect(url_for('admin_users'))
+
+
 if __name__ == '__main__':
     app.run(debug=True)
