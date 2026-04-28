@@ -153,8 +153,12 @@
                           </div>
                           <div class="col-auto">
                             <label class="form-label mb-0" style="font-size:.7rem">FY End YY</label>
-                            <input type="text" id="aid-fyend" class="form-control form-control-sm"
-                                   placeholder="e.g. 27" maxlength="2" style="width:55px">
+                            <select id="aid-fyend" class="form-select form-select-sm" style="width:80px">
+                              <option value="">—</option>
+                              {% for y in range(25, 36) %}
+                              <option value="{{ y }}">{{ y }}/{{ y + 1 }}</option>
+                              {% endfor %}
+                            </select>
                           </div>
                           <div class="col-auto">
                             <label class="form-label mb-0" style="font-size:.7rem">Seq #</label>
