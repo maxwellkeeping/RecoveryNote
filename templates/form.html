@@ -120,59 +120,55 @@
             <div class="card-body">
               <div class="row g-3">
                 {% for it in items %}
-                  <div class="col-md-6">
+                  <div class="{% if it.compound == 'agreement_id' %}col-12{% else %}col-md-6{% endif %}">
                     <label class="form-label" for="field-{{ it.name }}">
                       {{ it.label }}{% if it.required %} <span class="text-danger">*</span>{% endif %}
                     </label>
 
                     {% if it.compound == 'agreement_id' %}
-                      {# Compound Agreement ID builder #}
-                      <div class="compound-id-builder border rounded p-2" style="background:#f7f9fc">
-                        <div class="row g-2 align-items-end">
-                          <div class="col">
-                            <label class="form-label mb-0" style="font-size:.7rem">Client Cluster</label>
-                            <select id="aid-cluster" class="form-select form-select-sm">
-                              <option value="">— choose —</option>
-                              <option value="CAC|100">Central Agencies Cluster (CAC) - 100</option>
-                              <option value="CSC|200">Community Services Cluster (CSC) - 200</option>
-                              <option value="CYSSC|300">Children, Youth &amp; Social Services Cluster (CYSSC) - 300</option>
-                              <option value="LTC|400">Labour and Transportation Cluster (LTC) - 400</option>
-                              <option value="GSIC|500">Government Services Integration Cluster (GSIC) - 500</option>
-                              <option value="HSC|600">Health Services Cluster (HSC) - 600</option>
-                              <option value="JTS|700">Justice Technology Services (JTS) - 700</option>
-                              <option value="LRC|800">Land and Resources Cluster (LRC) - 800</option>
-                              <option value="CSD|900">GovTech ON - Cyber Security (CSD) - 900</option>
-                              <option value="TPSD|900">GovTech ON - Technology Policy &amp; Standards Development (TPSD) - 900</option>
-                            </select>
-                          </div>
-                          <div class="col-auto">
-                            <label class="form-label mb-0" style="font-size:.7rem">Date</label>
-                            <input type="date" id="aid-date" class="form-control form-control-sm" style="width:150px">
-                          </div>
-                          <div class="col-auto">
-                            <label class="form-label mb-0" style="font-size:.7rem">FY End YY</label>
-                            <select id="aid-fyend" class="form-select form-select-sm" style="width:80px">
-                              <option value="">—</option>
-                              {% for y in range(25, 36) %}
-                              <option value="{{ y }}">{{ y }}/{{ y + 1 }}</option>
-                              {% endfor %}
-                            </select>
-                          </div>
-                          <div class="col-auto">
-                            <button type="button" class="btn btn-sm btn-outline-primary" id="aid-compose">
-                              Build ID
-                            </button>
-                          </div>
+                      {# Compact single-row Agreement ID builder #}
+                      <div class="d-flex flex-wrap align-items-end gap-2">
+                        <div style="min-width:140px">
+                          <label class="form-label mb-0" style="font-size:.7rem;color:#777">Cluster</label>
+                          <select id="aid-cluster" class="form-select form-select-sm">
+                            <option value="">—</option>
+                            <option value="CAC|100">CAC - 100</option>
+                            <option value="CSC|200">CSC - 200</option>
+                            <option value="CYSSC|300">CYSSC - 300</option>
+                            <option value="LTC|400">LTC - 400</option>
+                            <option value="GSIC|500">GSIC - 500</option>
+                            <option value="HSC|600">HSC - 600</option>
+                            <option value="JTS|700">JTS - 700</option>
+                            <option value="LRC|800">LRC - 800</option>
+                            <option value="CSD|900">CSD - 900</option>
+                            <option value="TPSD|900">TPSD - 900</option>
+                          </select>
                         </div>
-                        <input type="hidden" id="aid-seq" value="">
-                        <div class="mt-2">
+                        <div>
+                          <label class="form-label mb-0" style="font-size:.7rem;color:#777">Date</label>
+                          <input type="date" id="aid-date" class="form-control form-control-sm" style="width:140px">
+                        </div>
+                        <div>
+                          <label class="form-label mb-0" style="font-size:.7rem;color:#777">FY</label>
+                          <select id="aid-fyend" class="form-select form-select-sm" style="width:72px">
+                            <option value="">—</option>
+                            {% for y in range(25, 36) %}
+                            <option value="{{ y }}">{{ y }}/{{ y + 1 }}</option>
+                            {% endfor %}
+                          </select>
+                        </div>
+                        <div>
+                          <button type="button" class="btn btn-sm btn-outline-primary" id="aid-compose">Build ID</button>
+                        </div>
+                        <div style="flex:1;min-width:200px">
                           <input type="text" name="{{ it.name }}" id="field-{{ it.name }}"
                                  class="form-control form-control-sm masked-input"
                                  value="{{ values.get(it.name, '') }}"
-                                 placeholder="Select cluster, date & FY then click Build ID"
-                                 readonly>
+                                 placeholder="← Build ID to generate"
+                                 readonly style="background:#fff">
                         </div>
                       </div>
+                      <input type="hidden" id="aid-seq" value="">
 
                     {% elif it.options and it.cascade_data %}
                       {# Cascading dropdown — options depend on parent field #}
