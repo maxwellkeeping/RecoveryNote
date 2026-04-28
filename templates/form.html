@@ -70,7 +70,7 @@
                       </div>
                       <input type="hidden" id="aid-seq" value="">
 
-                    {% elif it.options and it.cascade_data %}
+                    {% elif it.cascade_data %}
                       {# Cascading dropdown — options depend on parent field #}
                       <select name="{{ it.name }}" id="field-{{ it.name }}" class="form-select"
                               {% if it.required %}required{% endif %}

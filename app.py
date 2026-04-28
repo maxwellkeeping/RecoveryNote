@@ -40,10 +40,11 @@ login_manager.login_message_category = 'warning'
 
 
 class User(UserMixin):
-    def __init__(self, id, username, role):
+    def __init__(self, id, username, role, must_change_password=False):
         self.id = id
         self.username = username
         self.role = role
+        self.must_change_password = must_change_password
 
     @property
     def is_admin(self):
@@ -54,10 +55,10 @@ class User(UserMixin):
 def load_user(user_id):
     try:
         with db_cursor() as cur:
-            cur.execute("SELECT id, username, role FROM users WHERE id = %s", (int(user_id),))
+            cur.execute("SELECT id, username, role, must_change_password FROM users WHERE id = %s", (int(user_id),))
             row = cur.fetchone()
         if row:
-            return User(row[0], row[1], row[2])
+            return User(row[0], row[1], row[2], row[3])
     except Exception:
         pass
     return None
@@ -111,19 +112,32 @@ def init_db():
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id          SERIAL PRIMARY KEY,
-                username    VARCHAR(100) UNIQUE NOT NULL,
-                password    VARCHAR(256) NOT NULL,
-                role        VARCHAR(20)  NOT NULL DEFAULT 'user'
+                id                    SERIAL PRIMARY KEY,
+                username              VARCHAR(100) UNIQUE NOT NULL,
+                password              VARCHAR(256) NOT NULL,
+                role                  VARCHAR(20)  NOT NULL DEFAULT 'user',
+                must_change_password  BOOLEAN NOT NULL DEFAULT TRUE
             )
+        """)
+        # Migrate: add must_change_password column if missing (existing DBs)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'users' AND column_name = 'must_change_password'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT TRUE;
+                END IF;
+            END $$;
         """)
         # Seed default accounts if users table is empty
         cur.execute("SELECT COUNT(*) FROM users")
         if cur.fetchone()[0] == 0:
             cur.execute(
-                "INSERT INTO users (username, password, role) VALUES (%s, %s, %s), (%s, %s, %s)",
-                ('admin', hash_password('admin123'), 'admin',
-                 'user', hash_password('user123'), 'user')
+                "INSERT INTO users (username, password, role, must_change_password) VALUES (%s, %s, %s, %s), (%s, %s, %s, %s)",
+                ('admin', hash_password('admin123'), 'admin', True,
+                 'user', hash_password('user123'), 'user', True)
             )
 
 
@@ -143,6 +157,16 @@ def ensure_db():
             _db_initialized = True
         except Exception as _db_err:
             print(f"WARNING: database init failed: {_db_err}", file=sys.stderr)
+
+
+@app.before_request
+def enforce_password_change():
+    """Redirect users who must change their password to the change-password page."""
+    if current_user.is_authenticated and current_user.must_change_password:
+        allowed = ('change_password', 'logout', 'static')
+        if request.endpoint not in allowed:
+            flash('You must change your password before continuing.', 'warning')
+            return redirect(url_for('change_password'))
 
 
 def sanitize_name(s):
@@ -189,9 +213,16 @@ def load_field_groups():
                 lookup_val = lookups.get(mapped_key)
             else:
                 lookup_val = lookups.get(label)
-            if isinstance(lookup_val, dict):
+            if cascade_from:
+                # This is a cascade child — get cascade data from parent's lookup
+                parent_mapped = mapping.get(parent_label)
+                parent_lookup = lookups.get(parent_mapped) if parent_mapped else lookups.get(parent_label)
+                if isinstance(parent_lookup, dict):
+                    cascade_data = parent_lookup
+                    options = []  # options populated dynamically via JS
+            elif isinstance(lookup_val, dict):
+                # This is a cascade parent — show top-level keys as options
                 options = list(lookup_val.keys())
-                cascade_data = lookup_val
             else:
                 options = lookup_val
             if isinstance(options, list):
@@ -285,10 +316,44 @@ def login():
         if row and row[2] == hash_password(password):
             user = User(row[0], row[1], row[3])
             login_user(user)
+            # Check if user must change password
+            try:
+                with db_cursor() as cur2:
+                    cur2.execute("SELECT must_change_password FROM users WHERE id = %s", (user.id,))
+                    mcp = cur2.fetchone()
+                if mcp and mcp[0]:
+                    return redirect(url_for('change_password'))
+            except Exception:
+                pass
             next_page = request.args.get('next')
             return redirect(next_page or url_for('track'))
         flash('Invalid username or password.', 'danger')
     return render_template('login.html')
+
+
+@app.route('/change-password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    if request.method == 'POST':
+        new_pw = request.form.get('new_password', '').strip()
+        confirm_pw = request.form.get('confirm_password', '').strip()
+        if not new_pw or len(new_pw) < 6:
+            flash('Password must be at least 6 characters.', 'danger')
+            return render_template('change_password.html')
+        if new_pw != confirm_pw:
+            flash('Passwords do not match.', 'danger')
+            return render_template('change_password.html')
+        try:
+            with db_cursor() as cur:
+                cur.execute(
+                    "UPDATE users SET password = %s, must_change_password = FALSE WHERE id = %s",
+                    (hash_password(new_pw), current_user.id)
+                )
+            flash('Password changed successfully.', 'success')
+            return redirect(url_for('track'))
+        except Exception:
+            flash('Could not update password.', 'danger')
+    return render_template('change_password.html')
 
 
 @app.route('/logout')
@@ -512,7 +577,7 @@ def admin_users_add():
     try:
         with db_cursor() as cur:
             cur.execute(
-                "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)",
+                "INSERT INTO users (username, password, role, must_change_password) VALUES (%s, %s, %s, TRUE)",
                 (username, hash_password(password), role)
             )
         flash(f'User "{username}" created.', 'success')

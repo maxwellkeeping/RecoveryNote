@@ -45,10 +45,6 @@ var kvName       = '${take(appName, 10)}-kv-${take(suffix, 6)}'
 var pgServerName = '${take(toLower(appName), 15)}-pg-${suffix}'
 var dbName       = 'recoverynote'
 
-// ── Well-known role definition IDs ─────────────────────────────────────────────
-var kvSecretsUserRoleId    = '4633458b-17de-408a-b874-0445c86b69e6' // Key Vault Secrets User
-var kvSecretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7' // Key Vault Secrets Officer
-
 // ── App Service Plan (Linux, F1 Free) ─────────────────────────────────────────
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: planName
@@ -94,32 +90,27 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
       name: 'standard'
     }
     tenantId: subscription().tenantId
-    enableRbacAuthorization: true
+    enableRbacAuthorization: false
     softDeleteRetentionInDays: 7
     enableSoftDelete: true
-  }
-}
-
-// ── Role: deploying identity → Secrets Officer (write secrets during deploy) ───
-// Only created when deployerObjectId is provided.
-resource kvDeployerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deployerObjectId)) {
-  name: guid(keyVault.id, deployerObjectId, kvSecretsOfficerRoleId)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsOfficerRoleId)
-    principalId: deployerObjectId
-    principalType: 'User'
-  }
-}
-
-// ── Role: web app managed identity → Secrets User (read secrets at runtime) ───
-resource kvWebAppRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, webApp.id, kvSecretsUserRoleId)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsUserRoleId)
-    principalId: webApp.identity.principalId
-    principalType: 'ServicePrincipal'
+    accessPolicies: concat(
+      // Deployer — write secrets during deployment
+      !empty(deployerObjectId) ? [
+        {
+          tenantId: subscription().tenantId
+          objectId: deployerObjectId
+          permissions: { secrets: [ 'get', 'list', 'set', 'delete' ] }
+        }
+      ] : [],
+      // Web app managed identity — read secrets at runtime
+      [
+        {
+          tenantId: subscription().tenantId
+          objectId: webApp.identity.principalId
+          permissions: { secrets: [ 'get', 'list' ] }
+        }
+      ]
+    )
   }
 }
 
@@ -179,7 +170,7 @@ resource kvSecretDbUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   properties: {
     value: 'postgresql://${postgresAdminUser}:${postgresAdminPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/${dbName}?sslmode=require'
   }
-  dependsOn: [kvDeployerRole]
+  dependsOn: [keyVault]
 }
 
 resource kvSecretAppKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
@@ -188,7 +179,7 @@ resource kvSecretAppKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   properties: {
     value: secretKey
   }
-  dependsOn: [kvDeployerRole]
+  dependsOn: [keyVault]
 }
 
 // ── App Settings ───────────────────────────────────────────────────────────────
@@ -204,7 +195,7 @@ resource webAppSettings 'Microsoft.Web/sites/config@2023-12-01' = {
     SECRET_KEY: '@Microsoft.KeyVault(VaultName=${kvName};SecretName=secret-key)'
   }
   dependsOn: [
-    kvWebAppRole
+    keyVault
     kvSecretDbUrl
     kvSecretAppKey
   ]

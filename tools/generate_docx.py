@@ -8,7 +8,7 @@ from docx import Document
 
 # Path to the Word template — relative to this file's directory (tools/)
 _TEMPLATE = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Recovery Note (RN) with the Fields mapped.docx')
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'recovery_note_template.docx')
 )
 
 
@@ -34,15 +34,23 @@ def _fill_cell(cell, text):
         _set_para_text(cell.paragraphs[0], text or '')
 
 
-def _fill_ifis_row(row, code):
+def _fill_ifis_row(row, code, label_row=None):
     """
     Fill the IFIS table row one character per data cell.
-    Cells whose current text is '-' are separators — left unchanged.
+    Separator positions are determined from the label row (cells with '-').
+    If no label_row is given, separators are detected from the data row itself.
     """
+    # Determine separator positions from label row
+    separator_positions = set()
+    ref = label_row if label_row is not None else row
+    for idx, cell in enumerate(ref.cells):
+        if cell.text.strip() == '-':
+            separator_positions.add(idx)
+
     chars = re.sub(r'[^0-9A-Za-z]', '', code) if code else ''
     char_idx = 0
-    for cell in row.cells:
-        if cell.text.strip() == '-':
+    for idx, cell in enumerate(row.cells):
+        if idx in separator_positions:
             continue
         _fill_cell(cell, chars[char_idx] if char_idx < len(chars) else '')
         char_idx += 1
@@ -105,7 +113,7 @@ def generate(data):
 
     # ── Table 2: IFIS breakdown ───────────────────────────────────────────────
     t2 = doc.tables[2]
-    _fill_ifis_row(t2.rows[1], d.get('IFIS_CODE', ''))
+    _fill_ifis_row(t2.rows[0], d.get('IFIS_CODE', ''), label_row=t2.rows[1])
 
     # ── Paragraph "Column X" → full IFIS code ─────────────────────────────────
     for para in doc.paragraphs:
@@ -119,6 +127,17 @@ def generate(data):
         if _para_full_text(para).strip() == 'Name of Cluster':
             _set_para_text(para, cluster)
             break
+
+    # ── Footer: RN ID and Prepared By ─────────────────────────────────────────
+    agreement_id = d.get('AGREEMENT_ID', '')
+    author = d.get('AGREEMENT_AUTHOR', '')
+    for section in doc.sections:
+        for para in section.footer.paragraphs:
+            full = _para_full_text(para)
+            if 'Prepared By' in full:
+                _set_para_text(para, f'Prepared By: {author}')
+            elif 'RN ID' in full:
+                _set_para_text(para, f'RN ID:  {agreement_id}')
 
     # ── Write to a temporary file ──────────────────────────────────────────────
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.docx')

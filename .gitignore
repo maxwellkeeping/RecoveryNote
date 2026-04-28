@@ -37,3 +37,12 @@ Dockerfile
 
 # Bicep secrets — copy main.sample.bicepparam → main.bicepparam and fill in values
 infra/main.bicepparam
+
+# Azure CLI / deployment artifacts
+.azure/
+applogs/
+applogs.zip
+kudu_*.ps1
+
+# Reference documents (not needed at runtime)
+CAC-*.docx
