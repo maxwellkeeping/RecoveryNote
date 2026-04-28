@@ -234,9 +234,15 @@ def submit():
     values['_created_at'] = date.today().isoformat()
     with db_cursor() as cur:
         cur.execute(
-            "INSERT INTO submissions (data, created_at) VALUES (%s, %s)",
+            "INSERT INTO submissions (data, created_at) VALUES (%s, %s) RETURNING id",
             (json.dumps(values), date.today())
         )
+        new_id = cur.fetchone()[0]
+
+    if request.form.get('_action') == 'save_and_generate':
+        flash('Submission saved.', 'success')
+        return redirect(url_for('generate', id=new_id))
+
     flash('Submission saved.', 'success')
     return redirect(url_for('track'))
 

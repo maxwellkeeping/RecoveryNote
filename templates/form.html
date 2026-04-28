@@ -3,38 +3,183 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Recovery Note - Data Entry</title>
+    <title>Recovery Note — {% if edit_index %}Edit{% else %}New{% endif %} Agreement</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+      body { font-family: 'Inter', sans-serif; background: #f0f4f8; }
+      .page-header {
+        background: linear-gradient(135deg, #0E2841 0%, #156082 100%);
+        color: #fff;
+        padding: 1.5rem 2rem;
+        border-radius: 12px;
+        margin-bottom: 1.75rem;
+        box-shadow: 0 4px 14px rgba(14,40,65,.3);
+      }
+      .page-header h1 { font-size: 1.6rem; font-weight: 600; margin: 0; letter-spacing: .3px; }
+      .page-header p  { margin: .25rem 0 0; font-size: .85rem; opacity: .8; }
+      .section-card {
+        background: #fff;
+        border: none;
+        border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0,0,0,.07);
+        margin-bottom: 1.25rem;
+        overflow: hidden;
+      }
+      .section-card .card-header {
+        background: #f7f9fc;
+        border-bottom: 2px solid #E8E8E8;
+        border-left: 4px solid #156082;
+        padding: .65rem 1.25rem;
+        font-size: .78rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .8px;
+        color: #0E2841;
+      }
+      .section-card .card-body { padding: 1.25rem; }
+      .form-label {
+        font-size: .8rem;
+        font-weight: 500;
+        color: #333;
+        margin-bottom: .25rem;
+      }
+      .form-label .text-danger { font-weight: 700; }
+      .form-control, .form-select {
+        font-size: .875rem;
+        border-radius: 7px;
+        border-color: #d1dbe8;
+      }
+      .form-control:focus, .form-select:focus {
+        border-color: #156082;
+        box-shadow: 0 0 0 3px rgba(21,96,130,.15);
+      }
+      .hint-text {
+        font-size: .72rem;
+        color: #6c757d;
+        margin-top: .2rem;
+      }
+      .btn-submit {
+        background: linear-gradient(135deg, #0E2841, #156082);
+        border: none;
+        color: #fff;
+        font-weight: 600;
+        border-radius: 8px;
+        padding: .6rem 1.5rem;
+      }
+      .btn-submit:hover { opacity: .88; color: #fff; }
+      .btn-generate {
+        background: linear-gradient(135deg, #1a6b30, #28a745);
+        border: none;
+        color: #fff;
+        font-weight: 600;
+        border-radius: 8px;
+        padding: .6rem 1.5rem;
+      }
+      .btn-generate:hover { opacity: .88; color: #fff; }
+      .nav-link-back {
+        font-size: .85rem;
+        color: #467886;
+        text-decoration: none;
+        font-weight: 500;
+      }
+      .nav-link-back:hover { color: #156082; text-decoration: underline; }
+      .masked-input { font-family: 'Courier New', monospace; letter-spacing: 1px; }
+    </style>
   </head>
-  <body class="bg-light">
-    <div class="container py-4">
-      <h1 class="mb-3">Recovery Note — Data Entry</h1>
+  <body>
+    <div class="container py-4" style="max-width:960px">
+
+      <!-- Flash messages -->
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
-          {% for category, msg in messages %}
-            <div class="alert alert-{{ category }}">{{ msg }}</div>
+          {% for cat, msg in messages %}
+            <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+              {{ msg }}
+              <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
           {% endfor %}
         {% endif %}
       {% endwith %}
 
-      <form method="post" action="{{ url_for('submit') }}">
+      <!-- Page header -->
+      <div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div>
+          <h1>{% if edit_index %}Edit Agreement{% else %}New Recovery Agreement{% endif %}</h1>
+          <p>{% if edit_index %}Editing record #{{ edit_index }}{% else %}Fill in the fields below to create a new recovery note{% endif %}</p>
+        </div>
+        <a href="{{ url_for('track') }}" class="nav-link-back">← Back to Tracking</a>
+      </div>
+
+      <!-- Form -->
+      <form method="post" action="{% if edit_index %}{{ url_for('update', id=edit_index) }}{% else %}{{ url_for('submit') }}{% endif %}" id="entry-form">
+
         {% for group, items in groups %}
-          <div class="card mb-3">
-            <div class="card-header"><strong>{{ group }}</strong></div>
+          <div class="section-card">
+            <div class="card-header">{{ group }}</div>
             <div class="card-body">
-              <div class="row">
+              <div class="row g-3">
                 {% for it in items %}
-                  <div class="col-md-6 mb-2">
-                    <label class="form-label">{{ it.label }}{% if it.required %} <span class="text-danger">*</span>{% endif %}</label>
-                    {% if it.options %}
-                      <select name="{{ it.name }}" class="form-select" {% if it.required %}required{% endif %}>
+                  <div class="col-md-6">
+                    <label class="form-label" for="field-{{ it.name }}">
+                      {{ it.label }}{% if it.required %} <span class="text-danger">*</span>{% endif %}
+                    </label>
+
+                    {% if it.options and it.cascade_data %}
+                      {# Cascading dropdown — options depend on parent field #}
+                      <select name="{{ it.name }}" id="field-{{ it.name }}" class="form-select"
+                              {% if it.required %}required{% endif %}
+                              data-cascade-from="{{ it.cascade_from }}"
+                              data-cascade-options='{{ it.cascade_data | tojson }}'>
+                        <option value="">— choose —</option>
+                        {% if values.get(it.name) %}
+                          <option value="{{ values[it.name] }}" selected>{{ values[it.name] }}</option>
+                        {% endif %}
+                      </select>
+
+                    {% elif it.options %}
+                      <select name="{{ it.name }}" id="field-{{ it.name }}" class="form-select"
+                              {% if it.required %}required{% endif %}>
                         <option value="">— choose —</option>
                         {% for opt in it.options %}
-                          <option value="{{ opt }}">{{ opt }}</option>
+                          <option value="{{ opt }}" {% if values.get(it.name) == opt %}selected{% endif %}>{{ opt }}</option>
                         {% endfor %}
                       </select>
+
+                    {% elif it.input_mask %}
+                      <input type="text" name="{{ it.name }}" id="field-{{ it.name }}"
+                             class="form-control masked-input"
+                             placeholder="{{ it.placeholder or it.input_mask }}"
+                             value="{{ values.get(it.name, '') }}"
+                             data-mask="{{ it.input_mask }}"
+                             {% if it.required %}required{% endif %}>
+
+                    {% elif it.input_type == 'date' %}
+                      <input type="date" name="{{ it.name }}" id="field-{{ it.name }}"
+                             class="form-control"
+                             value="{{ values.get(it.name, '') }}"
+                             {% if it.required %}required{% endif %}>
+
+                    {% elif it.input_type == 'number' %}
+                      <input type="number" name="{{ it.name }}" id="field-{{ it.name }}"
+                             class="form-control"
+                             placeholder="{{ it.placeholder or '' }}"
+                             value="{{ values.get(it.name, '') }}"
+                             {% if it.input_min %}min="{{ it.input_min }}"{% endif %}
+                             {% if it.input_max %}max="{{ it.input_max }}"{% endif %}
+                             {% if it.input_step %}step="{{ it.input_step }}"{% endif %}
+                             {% if it.required %}required{% endif %}>
+
                     {% else %}
-                      <input name="{{ it.name }}" class="form-control" {% if it.required %}required{% endif %}>
+                      <input type="text" name="{{ it.name }}" id="field-{{ it.name }}"
+                             class="form-control"
+                             placeholder="{{ it.placeholder or '' }}"
+                             value="{{ values.get(it.name, '') }}"
+                             {% if it.required %}required{% endif %}>
+                    {% endif %}
+
+                    {% if it.hint %}
+                      <div class="hint-text">{{ it.hint }}</div>
                     {% endif %}
                   </div>
                 {% endfor %}
@@ -43,11 +188,113 @@
           </div>
         {% endfor %}
 
-        <div class="d-flex gap-2">
-          <button type="submit" class="btn btn-primary">Save Submission</button>
-          <a href="/submissions" class="btn btn-outline-secondary" target="_blank">View JSON Submissions</a>
+        <!-- Action buttons -->
+        <div class="d-flex flex-wrap gap-2 mt-3 mb-4">
+          <button type="submit" class="btn btn-submit">
+            {% if edit_index %}Update Agreement{% else %}Save Agreement{% endif %}
+          </button>
+          {% if edit_index %}
+            <a href="{{ url_for('generate', id=edit_index) }}" class="btn btn-generate">
+              ⬇ Generate Document
+            </a>
+          {% endif %}
+          <button type="submit" formaction="{{ url_for('submit') }}" formmethod="post"
+                  class="btn btn-generate" name="_action" value="save_and_generate"
+                  {% if edit_index %}style="display:none"{% endif %}>
+            💾 Save &amp; Generate Document
+          </button>
+          <a href="{{ url_for('track') }}" class="btn btn-outline-secondary">Cancel</a>
         </div>
       </form>
     </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    // ── Input mask for cost centre (IFIS CODE) ──────────────────────────────────
+    document.querySelectorAll('[data-mask]').forEach(function(el) {
+      var mask = el.dataset.mask;
+      el.addEventListener('input', function(e) {
+        var raw = el.value.replace(/[^0-9A-Za-z]/g, '');
+        var result = '';
+        var ri = 0;
+        for (var mi = 0; mi < mask.length && ri < raw.length; mi++) {
+          if (mask[mi] === '0' || mask[mi] === 'A' || mask[mi] === '*') {
+            result += raw[ri];
+            ri++;
+          } else {
+            result += mask[mi];
+            if (raw[ri] === mask[mi]) ri++;
+          }
+        }
+        el.value = result;
+      });
+      el.addEventListener('keypress', function(e) {
+        if (e.ctrlKey || e.metaKey) return;
+        var ch = String.fromCharCode(e.which || e.keyCode);
+        if (!/[0-9A-Za-z]/.test(ch) && ch !== '-') {
+          e.preventDefault();
+        }
+      });
+    });
+
+    // ── Cascading dropdowns ─────────────────────────────────────────────────────
+    document.querySelectorAll('[data-cascade-from]').forEach(function(dep) {
+      var parentName = dep.dataset.cascadeFrom;
+      var parent = document.querySelector('[name="' + parentName + '"]');
+      if (!parent) return;
+      var options = JSON.parse(dep.dataset.cascadeOptions);
+      var currentVal = dep.value;
+
+      function updateOptions() {
+        var parentVal = parent.value;
+        var choices = options[parentVal] || [];
+        dep.innerHTML = '<option value="">— choose —</option>';
+        if (Array.isArray(choices)) {
+          choices.forEach(function(c) {
+            var opt = document.createElement('option');
+            opt.value = c;
+            opt.textContent = c;
+            if (c === currentVal) opt.selected = true;
+            dep.appendChild(opt);
+          });
+        }
+      }
+      parent.addEventListener('change', function() { currentVal = ''; updateOptions(); });
+      if (parent.value) updateOptions();
+    });
+
+    // ── Compound Agreement ID auto-generation ───────────────────────────────────
+    (function() {
+      var idField = document.getElementById('field-AGREEMENT_ID');
+      if (!idField) return;
+      var clusterField = document.querySelector('[name="SERVICE_OWNER"]') ||
+                         document.querySelector('[name="CLUSTER"]');
+      if (!clusterField) return;
+
+      var clusterAbbr = {
+        'GSIC': 'GSIC', 'GovTech ON - Cyber Security (CSD)': 'CSD',
+        'GovTech ON - Technology Policy & Standards Development (TPSD)': 'TPSD'
+      };
+
+      function generateId() {
+        if (idField.value && !idField.dataset.autoGenerated) return;
+        var cluster = clusterField.value;
+        var abbr = clusterAbbr[cluster] || (cluster ? cluster.substring(0,4).toUpperCase() : '');
+        if (!abbr) return;
+        var today = new Date();
+        var dateStr = today.getFullYear().toString() +
+                      String(today.getMonth()+1).padStart(2,'0') +
+                      String(today.getDate()).padStart(2,'0');
+        var prefix = abbr + '-' + dateStr + '-RN';
+        fetch('/api/next-seq?prefix=' + encodeURIComponent(prefix))
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            idField.value = prefix + String(d.seq).padStart(3, '0');
+            idField.dataset.autoGenerated = '1';
+          });
+      }
+      clusterField.addEventListener('change', generateId);
+    })();
+    </script>
   </body>
 </html>
