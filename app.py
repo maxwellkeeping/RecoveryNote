@@ -3,11 +3,14 @@ import json
 import os
 import re
 import sys
+import hashlib
 from contextlib import contextmanager
 from datetime import date
+from functools import wraps
 
 import psycopg2
 import psycopg2.extras
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
 APP_DIR = os.path.dirname(__file__)
 sys.path.insert(0, os.path.join(APP_DIR, 'tools'))
@@ -28,6 +31,53 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-in-production')
 # expose sanitize helper to templates
 app.jinja_env.globals['sanitize_name'] = lambda s: re.sub(r"[^0-9A-Za-z]+", '_', s).strip('_')
+
+# ── Flask-Login setup ────────────────────────────────────────────────────────
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+login_manager.login_message_category = 'warning'
+
+
+class User(UserMixin):
+    def __init__(self, id, username, role):
+        self.id = id
+        self.username = username
+        self.role = role
+
+    @property
+    def is_admin(self):
+        return self.role == 'admin'
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    try:
+        with db_cursor() as cur:
+            cur.execute("SELECT id, username, role FROM users WHERE id = %s", (int(user_id),))
+            row = cur.fetchone()
+        if row:
+            return User(row[0], row[1], row[2])
+    except Exception:
+        pass
+    return None
+
+
+def admin_required(f):
+    """Decorator: requires login + admin role."""
+    @wraps(f)
+    @login_required
+    def decorated(*args, **kwargs):
+        if not current_user.is_admin:
+            flash('Admin access required.', 'danger')
+            return redirect(url_for('track'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def hash_password(password):
+    """Simple SHA-256 hash. Adequate for PoC; upgrade to bcrypt for production."""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
 
 @contextmanager
@@ -50,7 +100,7 @@ def db_cursor():
 
 
 def init_db():
-    """Create the submissions table if it does not yet exist."""
+    """Create the submissions and users tables if they do not yet exist."""
     with db_cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS submissions (
@@ -59,6 +109,22 @@ def init_db():
                 created_at  DATE   NOT NULL DEFAULT CURRENT_DATE
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id          SERIAL PRIMARY KEY,
+                username    VARCHAR(100) UNIQUE NOT NULL,
+                password    VARCHAR(256) NOT NULL,
+                role        VARCHAR(20)  NOT NULL DEFAULT 'user'
+            )
+        """)
+        # Seed default accounts if users table is empty
+        cur.execute("SELECT COUNT(*) FROM users")
+        if cur.fetchone()[0] == 0:
+            cur.execute(
+                "INSERT INTO users (username, password, role) VALUES (%s, %s, %s), (%s, %s, %s)",
+                ('admin', hash_password('admin123'), 'admin',
+                 'user', hash_password('user123'), 'user')
+            )
 
 
 _db_initialized = False
@@ -159,6 +225,7 @@ def load_field_groups():
 
 
 @app.route('/map-lookups', methods=['GET', 'POST'])
+@admin_required
 def map_lookups():
     groups = load_field_groups()
     labels = []
@@ -197,13 +264,52 @@ def map_lookups():
     return render_template('map_lookups.html', labels=labels, lookups=list(lookups.keys()), mapping=mapping)
 
 
+# ── Authentication routes ────────────────────────────────────────────────────
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('track'))
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        try:
+            with db_cursor() as cur:
+                cur.execute(
+                    "SELECT id, username, password, role FROM users WHERE username = %s",
+                    (username,)
+                )
+                row = cur.fetchone()
+        except Exception:
+            row = None
+        if row and row[2] == hash_password(password):
+            user = User(row[0], row[1], row[3])
+            login_user(user)
+            next_page = request.args.get('next')
+            return redirect(next_page or url_for('track'))
+        flash('Invalid username or password.', 'danger')
+    return render_template('login.html')
+
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash('Logged out.', 'info')
+    return redirect(url_for('login'))
+
+
+# ── Application routes ───────────────────────────────────────────────────────
+
 @app.route('/', methods=['GET'])
+@login_required
 def form():
     groups = load_field_groups()
     return render_template('form.html', groups=groups, values={}, edit_index=None)
 
 
 @app.route('/edit/<int:id>', methods=['GET'])
+@login_required
 def edit(id):
     with db_cursor() as cur:
         cur.execute("SELECT data FROM submissions WHERE id = %s", (id,))
@@ -216,6 +322,7 @@ def edit(id):
 
 
 @app.route('/submit', methods=['POST'])
+@login_required
 def submit():
     groups = load_field_groups()
     missing = []
@@ -248,6 +355,7 @@ def submit():
 
 
 @app.route('/update/<int:id>', methods=['POST'])
+@login_required
 def update(id):
     with db_cursor() as cur:
         cur.execute("SELECT data FROM submissions WHERE id = %s", (id,))
@@ -278,6 +386,7 @@ def update(id):
 
 
 @app.route('/generate/<int:id>', methods=['GET'])
+@login_required
 def generate(id):
     """Generate a filled Recovery Note docx for the submission with the given id."""
     with db_cursor() as cur:
@@ -305,6 +414,7 @@ def generate(id):
 
 
 @app.route('/generate', methods=['GET'])
+@login_required
 def generate_latest():
     """Generate the most recent submission."""
     with db_cursor() as cur:
@@ -325,6 +435,7 @@ def submissions_api():
 
 
 @app.route('/track', methods=['GET'])
+@login_required
 def track():
     with db_cursor() as cur:
         cur.execute("SELECT id, data FROM submissions ORDER BY id")
@@ -334,6 +445,7 @@ def track():
 
 
 @app.route('/delete/<int:id>', methods=['POST'])
+@login_required
 def delete(id):
     with db_cursor() as cur:
         cur.execute("DELETE FROM submissions WHERE id = %s RETURNING id", (id,))
@@ -372,6 +484,7 @@ def next_seq():
 
 
 @app.route('/admin')
+@admin_required
 def admin():
     return render_template('admin.html')
 

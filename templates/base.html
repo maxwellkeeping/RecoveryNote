@@ -119,6 +119,7 @@
   <body>
 
     <!-- ── Navbar ─────────────────────────────────────────────────────────── -->
+    {% if current_user.is_authenticated %}
     <nav class="app-navbar">
       <div class="container d-flex align-items-center gap-3" style="max-width:1200px">
         <a class="brand" href="{{ url_for('track') }}">Recovery Note</a>
@@ -127,11 +128,18 @@
              href="{{ url_for('form') }}">+ New Agreement</a>
           <a class="nav-link {% if request.endpoint == 'track' %}active{% endif %}"
              href="{{ url_for('track') }}">Tracking</a>
+          {% if current_user.is_admin %}
           <a class="nav-link {% if request.endpoint == 'admin' %}active{% endif %}"
              href="{{ url_for('admin') }}">Admin</a>
+          {% endif %}
+        </div>
+        <div class="ms-auto d-flex align-items-center gap-2">
+          <span style="color:rgba(255,255,255,.6);font-size:.78rem">{{ current_user.username }}</span>
+          <a class="nav-link" href="{{ url_for('logout') }}" style="font-size:.78rem">Sign Out</a>
         </div>
       </div>
     </nav>
+    {% endif %}
 
     <!-- ── Main content ──────────────────────────────────────────────────── -->
     <div class="container py-4" style="max-width:{% block container_width %}960{% endblock %}px">
