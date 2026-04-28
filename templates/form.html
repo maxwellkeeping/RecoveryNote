@@ -131,19 +131,25 @@
                              value="{{ values.get(it.name, '') }}">
                       <div class="compound-id-builder border rounded p-2" style="background:#f7f9fc">
                         <div class="row g-2 align-items-end">
-                          <div class="col-auto">
-                            <label class="form-label mb-0" style="font-size:.7rem">Cluster Abbr</label>
-                            <input type="text" id="aid-cluster" class="form-control form-control-sm masked-input"
-                                   placeholder="e.g. GSIC" maxlength="6" style="width:80px">
+                          <div class="col">
+                            <label class="form-label mb-0" style="font-size:.7rem">Client Cluster</label>
+                            <select id="aid-cluster" class="form-select form-select-sm">
+                              <option value="">— choose —</option>
+                              <option value="CAC|100">Central Agencies Cluster (CAC) - 100</option>
+                              <option value="CSC|200">Community Services Cluster (CSC) - 200</option>
+                              <option value="CYSSC|300">Children, Youth &amp; Social Services Cluster (CYSSC) - 300</option>
+                              <option value="LTC|400">Labour and Transportation Cluster (LTC) - 400</option>
+                              <option value="GSIC|500">Government Services Integration Cluster (GSIC) - 500</option>
+                              <option value="HSC|600">Health Services Cluster (HSC) - 600</option>
+                              <option value="JTS|700">Justice Technology Services (JTS) - 700</option>
+                              <option value="LRC|800">Land and Resources Cluster (LRC) - 800</option>
+                              <option value="CSD|900">GovTech ON - Cyber Security (CSD) - 900</option>
+                              <option value="TPSD|900">GovTech ON - Technology Policy &amp; Standards Development (TPSD) - 900</option>
+                            </select>
                           </div>
                           <div class="col-auto">
                             <label class="form-label mb-0" style="font-size:.7rem">Date</label>
                             <input type="date" id="aid-date" class="form-control form-control-sm" style="width:150px">
-                          </div>
-                          <div class="col-auto">
-                            <label class="form-label mb-0" style="font-size:.7rem">Cluster #</label>
-                            <input type="text" id="aid-clusternum" class="form-control form-control-sm"
-                                   placeholder="e.g. 500" maxlength="4" style="width:70px">
                           </div>
                           <div class="col-auto">
                             <label class="form-label mb-0" style="font-size:.7rem">FY End YY</label>
@@ -310,12 +316,19 @@
       var hidden   = document.getElementById('field-AGREEMENT_ID');
       var cluster  = document.getElementById('aid-cluster');
       var dateEl   = document.getElementById('aid-date');
-      var cnum     = document.getElementById('aid-clusternum');
       var fyend    = document.getElementById('aid-fyend');
       var seqEl    = document.getElementById('aid-seq');
       var preview  = document.getElementById('aid-preview');
       var btn      = document.getElementById('aid-compose');
       if (!hidden || !cluster) return;
+
+      // Helper: extract abbr and number from cluster dropdown value "ABBR|NUM"
+      function clusterParts() {
+        var v = cluster.value;
+        if (!v) return { abbr: '', num: '' };
+        var p = v.split('|');
+        return { abbr: p[0], num: p[1] || '' };
+      }
 
       // Default date to today
       var today = new Date();
@@ -327,9 +340,15 @@
       if (hidden.value) {
         var parts = hidden.value.match(/^([A-Z]+)-(\d{8})-RN(\d+?)(\d{2})(\d{3})$/);
         if (parts) {
-          cluster.value = parts[1];
+          // Find matching dropdown option by abbreviation
+          var opts = cluster.options;
+          for (var i = 0; i < opts.length; i++) {
+            if (opts[i].value.split('|')[0] === parts[1]) {
+              cluster.value = opts[i].value;
+              break;
+            }
+          }
           dateEl.value = parts[2].substring(0,4)+'-'+parts[2].substring(4,6)+'-'+parts[2].substring(6,8);
-          cnum.value = parts[3];
           fyend.value = parts[4];
           seqEl.value = parts[5];
         }
@@ -337,12 +356,11 @@
 
       function compose() {
         var d = dateEl.value.replace(/-/g, '');
-        var c = cluster.value.toUpperCase().trim();
-        var cn = cnum.value.trim();
+        var cp = clusterParts();
         var fy = fyend.value.trim();
         var sq = seqEl.value.trim().padStart(3, '0');
-        if (c && d.length === 8) {
-          var id = c + '-' + d + '-RN' + cn + fy + sq;
+        if (cp.abbr && d.length === 8) {
+          var id = cp.abbr + '-' + d + '-RN' + cp.num + fy + sq;
           hidden.value = id;
           preview.textContent = id;
         } else {
@@ -350,18 +368,18 @@
         }
       }
 
-      [cluster, dateEl, cnum, fyend, seqEl].forEach(function(el) {
+      [cluster, dateEl, fyend, seqEl].forEach(function(el) {
         el.addEventListener('input', compose);
+        el.addEventListener('change', compose);
       });
 
       btn.addEventListener('click', function() {
         // Auto-fetch next sequence number from backend
         var d = dateEl.value.replace(/-/g, '');
-        var c = cluster.value.toUpperCase().trim();
-        var cn = cnum.value.trim();
+        var cp = clusterParts();
         var fy = fyend.value.trim();
-        if (!c || d.length !== 8) return;
-        var prefix = c + '-' + d + '-RN' + cn + fy;
+        if (!cp.abbr || d.length !== 8) return;
+        var prefix = cp.abbr + '-' + d + '-RN' + cp.num + fy;
         fetch('/api/next-seq?prefix=' + encodeURIComponent(prefix))
           .then(function(r) { return r.json(); })
           .then(function(data) {
