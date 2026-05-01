@@ -63,6 +63,15 @@
         box-shadow: 0 0 0 3px rgba(21,96,130,.15);
         outline: none;
       }
+      .copy-link-btn {
+        border: 1px solid #d1dbe8;
+        background: #fff;
+        color: #156082;
+        font-size: .68rem;
+        border-radius: 4px;
+        padding: 0 .35rem;
+        margin-left: .35rem;
+      }
 {% endblock %}
 
 {% block content %}
@@ -103,6 +112,7 @@
                 <th>Start Date</th>
                 <th>End Date</th>
                 <th>Service Owner</th>
+                <th>eApprovals</th>
                 <th style="width:130px">Actions</th>
               </tr>
             </thead>
@@ -110,12 +120,14 @@
               {% for row in rows %}
               {% set agr_id = row.get('AGREEMENT_ID','') %}
               {% set cluster_abbr = agr_id.split('-')[0] if '-' in agr_id else agr_id %}
+              {% set package_id = (row.get('eApprovals_Package_ID_253_YYYY','') or '').strip() %}
               <tr data-search="{{ [
                     agr_id,
                     row.get('AGREEMENT_NAME_DESCRIPTION',''),
                     row.get('AGREEMENT_AUTHOR',''),
                     row.get('AGREEMENT_TYPE',''),
-                    row.get('SERVICE_OWNER','')
+                    row.get('SERVICE_OWNER',''),
+                    package_id
                   ] | join(' ') | lower }}"
                   data-cluster="{{ cluster_abbr | lower }}"
                   data-status="{{ row.get('STATUS','') | lower }}">
@@ -151,6 +163,17 @@
                 <td style="white-space:nowrap">{{ row.get('START_DATE_YYYY_MM_DD') or '—' }}</td>
                 <td style="white-space:nowrap">{{ row.get('END_DATE_YYYY_MM_DD') or '—' }}</td>
                 <td>{{ row.get('SERVICE_OWNER') or '—' }}</td>
+                <td style="white-space:nowrap">
+                  {% if package_id %}
+                    <a href="https://www.eapprovals.cac.gov.on.ca/#/approval/{{ package_id }}"
+                       target="_blank" rel="noopener noreferrer" class="eapprovals-link">
+                      {{ package_id }}
+                    </a>
+                    <button type="button" class="copy-link-btn" data-link="https://www.eapprovals.cac.gov.on.ca/#/approval/{{ package_id }}">Copy</button>
+                  {% else %}
+                    <span class="text-muted">Not populated</span>
+                  {% endif %}
+                </td>
                 <td>
                   <div class="d-flex gap-1">
                     <a href="{{ url_for('generate', id=row.id) }}"
@@ -242,5 +265,20 @@
         const isFiltered = q || cluster || status;
         el.textContent = isFiltered ? `Showing ${visible} of ${total}` : '';
       }
+
+      document.querySelectorAll('.copy-link-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var link = btn.getAttribute('data-link') || '';
+          if (!link) return;
+          navigator.clipboard.writeText(link).then(function() {
+            var prev = btn.textContent;
+            btn.textContent = 'Copied';
+            setTimeout(function() { btn.textContent = prev; }, 1200);
+          }).catch(function() {
+            btn.textContent = 'Failed';
+            setTimeout(function() { btn.textContent = 'Copy'; }, 1200);
+          });
+        });
+      });
     </script>
 {% endblock %}

@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// RecoveryNote — Azure infrastructure
+// RecoveryNote + client-llm-wiki — Shared Azure infrastructure
 //
 // Deploy with:
 //   az deployment group create \
@@ -37,29 +37,42 @@ param deployerObjectId string = ''
 @allowed(['Standard_B1ms', 'Standard_B2ms', 'Standard_D2s_v3'])
 param postgresSkuName string = 'Standard_B1ms'
 
-// ── Derived names ──────────────────────────────────────────────────────────────
-var suffix       = take(uniqueString(resourceGroup().id), 8)
-var planName     = '${appName}-plan'
-var webAppName   = '${appName}-${suffix}'
-var kvName       = '${take(appName, 10)}-kv-${take(suffix, 6)}'
-var pgServerName = '${take(toLower(appName), 15)}-pg-${suffix}'
-var dbName       = 'recoverynote'
+@description('Whether to deploy the client-llm-wiki Node.js app alongside RecoveryNote.')
+param deployWiki bool = true
 
-// ── App Service Plan (Linux, F1 Free) ─────────────────────────────────────────
+@description('NextAuth secret for client-llm-wiki. Use: openssl rand -base64 32')
+@secure()
+param wikiAuthSecret string = ''
+
+@description('Anthropic API key for client-llm-wiki AI features.')
+@secure()
+param wikiAnthropicApiKey string = ''
+
+// ── Derived names ──────────────────────────────────────────────────────────────
+var suffix         = take(uniqueString(resourceGroup().id), 8)
+var planName       = '${appName}-plan'
+var webAppName     = '${appName}-${suffix}'
+var wikiAppName    = 'clientwiki-${suffix}'
+var kvName         = '${take(appName, 10)}-kv-${take(suffix, 6)}'
+var pgServerName   = '${take(toLower(appName), 15)}-pg-${suffix}'
+var dbName         = 'recoverynote'
+var wikiDbName     = 'clientllmwiki'
+
+// ── App Service Plan (Linux, B1 Basic — supports both apps with always-on) ───
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: planName
   location: location
   kind: 'linux'
   sku: {
-    name: 'F1'
-    tier: 'Free'
+    name: 'B1'
+    tier: 'Basic'
   }
   properties: {
     reserved: true
   }
 }
 
-// ── Web App ────────────────────────────────────────────────────────────────────
+// ── Web App (RecoveryNote — Python/Flask) ──────────────────────────────────────
 // App settings are applied in a child config resource below, after KV secrets
 // exist and the managed identity has been granted access.
 resource webApp 'Microsoft.Web/sites@2023-12-01' = {
@@ -73,9 +86,29 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: 'PYTHON|3.12'
-      alwaysOn: false      // required for F1 Free tier
+      alwaysOn: true
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
+    }
+  }
+}
+
+// ── Web App (client-llm-wiki — Node.js/Next.js) ───────────────────────────────
+resource wikiApp 'Microsoft.Web/sites@2023-12-01' = if (deployWiki) {
+  name: wikiAppName
+  location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    serverFarmId: appServicePlan.id
+    httpsOnly: true
+    siteConfig: {
+      linuxFxVersion: 'NODE|18-lts'
+      alwaysOn: true
+      ftpsState: 'Disabled'
+      minTlsVersion: '1.2'
+      appCommandLine: 'node server.js'
     }
   }
 }
@@ -109,7 +142,15 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
           objectId: webApp.identity.principalId
           permissions: { secrets: [ 'get', 'list' ] }
         }
-      ]
+      ],
+      // Wiki app managed identity — read secrets at runtime
+      deployWiki ? [
+        {
+          tenantId: subscription().tenantId
+          objectId: wikiApp.identity!.principalId
+          permissions: { secrets: [ 'get', 'list' ] }
+        }
+      ] : []
     )
   }
 }
@@ -152,6 +193,15 @@ resource postgresDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-06
   }
 }
 
+resource wikiPostgresDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-06-01-preview' = if (deployWiki) {
+  parent: postgresServer
+  name: wikiDbName
+  properties: {
+    charset: 'UTF8'
+    collation: 'en_US.utf8'
+  }
+}
+
 // Allow all Azure-internal IPs — required for App Service to reach PostgreSQL without VNet.
 resource postgresFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-06-01-preview' = {
   parent: postgresServer
@@ -182,6 +232,33 @@ resource kvSecretAppKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   dependsOn: [keyVault]
 }
 
+resource kvSecretWikiDbUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (deployWiki) {
+  parent: keyVault
+  name: 'wiki-database-url'
+  properties: {
+    value: 'postgresql://${postgresAdminUser}:${postgresAdminPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/${wikiDbName}?sslmode=require'
+  }
+  dependsOn: [keyVault]
+}
+
+resource kvSecretWikiAuthSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (deployWiki && !empty(wikiAuthSecret)) {
+  parent: keyVault
+  name: 'wiki-auth-secret'
+  properties: {
+    value: wikiAuthSecret
+  }
+  dependsOn: [keyVault]
+}
+
+resource kvSecretWikiAnthropicKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (deployWiki && !empty(wikiAnthropicApiKey)) {
+  parent: keyVault
+  name: 'wiki-anthropic-api-key'
+  properties: {
+    value: wikiAnthropicApiKey
+  }
+  dependsOn: [keyVault]
+}
+
 // ── App Settings ───────────────────────────────────────────────────────────────
 // Applied after KV secrets exist and the managed identity has been granted access.
 // Secrets never appear in plain text — they are Key Vault references resolved at runtime.
@@ -201,8 +278,28 @@ resource webAppSettings 'Microsoft.Web/sites/config@2023-12-01' = {
   ]
 }
 
+resource wikiAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (deployWiki) {
+  parent: wikiApp
+  name: 'appsettings'
+  properties: {
+    SCM_DO_BUILD_DURING_DEPLOYMENT: 'true'
+    DATABASE_URL: '@Microsoft.KeyVault(VaultName=${kvName};SecretName=wiki-database-url)'
+    AUTH_SECRET: '@Microsoft.KeyVault(VaultName=${kvName};SecretName=wiki-auth-secret)'
+    ANTHROPIC_API_KEY: '@Microsoft.KeyVault(VaultName=${kvName};SecretName=wiki-anthropic-api-key)'
+    NEXTAUTH_URL: 'https://${wikiAppName}.azurewebsites.net'
+  }
+  dependsOn: [
+    keyVault
+    kvSecretWikiDbUrl
+    kvSecretWikiAuthSecret
+    kvSecretWikiAnthropicKey
+  ]
+}
+
 // ── Outputs ────────────────────────────────────────────────────────────────────
 output webAppUrl string = 'https://${webApp.properties.defaultHostName}'
 output webAppName string = webApp.name
+output wikiAppUrl string = deployWiki ? 'https://${wikiApp.properties!.defaultHostName}' : ''
+output wikiAppName string = deployWiki ? wikiApp.name! : ''
 output keyVaultName string = keyVault.name
 output postgresServerFqdn string = postgresServer.properties.fullyQualifiedDomainName

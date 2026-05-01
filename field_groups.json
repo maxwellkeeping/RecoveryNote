@@ -109,7 +109,8 @@
       "display_label": "Agreement Name / Description"
     },
     "CLIENT \nCONTACT NAME": {
-      "display_label": "Client Contact Name"
+      "display_label": "Client Contact Name",
+      "placeholder": "Last name, First name"
     },
     "AGREEMENT TYPE": {
       "display_label": "Agreement Type"
@@ -118,7 +119,8 @@
       "display_label": "Previous Agreement #"
     },
     "AGREEMENT AUTHOR": {
-      "display_label": "Agreement Author"
+      "display_label": "Agreement Author",
+      "placeholder": "Last name, First name"
     },
     "eApprovals Package ID (253-YYYY-####)": {
       "display_label": "eApprovals Package ID",

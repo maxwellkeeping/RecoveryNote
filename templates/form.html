@@ -12,7 +12,7 @@
       </div>
 
       <!-- Form -->
-      <form method="post" action="{% if edit_index %}{{ url_for('update', id=edit_index) }}{% else %}{{ url_for('submit') }}{% endif %}" id="entry-form">
+      <form method="post" enctype="multipart/form-data" action="{% if edit_index %}{{ url_for('update', id=edit_index) }}{% else %}{{ url_for('submit') }}{% endif %}" id="entry-form">
 
         {% for group, items in groups %}
           <div class="section-card">
@@ -53,7 +53,7 @@
                           <select id="aid-fyend" class="form-select form-select-sm" style="width:72px">
                             <option value="">—</option>
                             {% for y in range(25, 36) %}
-                            <option value="{{ y }}">{{ y }}/{{ y + 1 }}</option>
+                            <option value="{{ y + 1 }}">{{ y }}/{{ y + 1 }}</option>
                             {% endfor %}
                           </select>
                         </div>
@@ -135,6 +135,23 @@
                                 placeholder="{{ it.placeholder or '' }}"
                                 {% if it.required %}required{% endif %}>{{ values.get(it.name, '') }}</textarea>
 
+                    {% elif it.name == 'eApprovals_Package_ID_253_YYYY' %}
+                      <input type="text" name="{{ it.name }}" id="field-{{ it.name }}"
+                             class="form-control"
+                             placeholder="{{ it.placeholder or '' }}"
+                             value="{{ values.get(it.name, '') }}"
+                             {% if it.required %}required{% endif %}>
+                      <div class="hint-text" id="eapprovals-link-wrap">
+                        {% if values.get(it.name, '') %}
+                          <a id="eapprovals-link"
+                             href="https://www.eapprovals.cac.gov.on.ca/#/approval/{{ values.get(it.name, '') }}"
+                             target="_blank" rel="noopener noreferrer">Open eApprovals package</a>
+                          <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="copy-eapprovals-link">Copy link</button>
+                        {% else %}
+                          <span id="eapprovals-link">Link will appear after Package ID is entered.</span>
+                        {% endif %}
+                      </div>
+
                     {% else %}
                       <input type="text" name="{{ it.name }}" id="field-{{ it.name }}"
                              class="form-control"
@@ -152,6 +169,28 @@
             </div>
           </div>
         {% endfor %}
+
+        <div class="section-card">
+          <div class="card-header">Attachments</div>
+          <div class="card-body">
+            <label class="form-label" for="attachments">Add Attachments (optional)</label>
+            <input type="file" id="attachments" name="attachments" class="form-control" multiple>
+            <div class="hint-text">You can upload multiple files. Uploading new files on edit keeps existing ones.</div>
+
+            {% if edit_index and attachments %}
+              <div class="mt-2">
+                <div class="form-label" style="font-size:.72rem">Existing Attachments</div>
+                <ul class="mb-0" style="font-size:.82rem; padding-left: 1.1rem;">
+                  {% for a in attachments %}
+                    <li>
+                      <a href="{{ url_for('download_attachment', id=edit_index, filename=a['stored']) }}">{{ a['name'] }}</a>
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endif %}
+          </div>
+        </div>
 
         <!-- Action buttons -->
         <div class="section-card">
@@ -301,6 +340,47 @@
             compose();
           });
       });
+    })();
+
+    // ── eApprovals link helper ───────────────────────────────────────────────
+    (function() {
+      var pkgField = document.getElementById('field-eApprovals_Package_ID_253_YYYY');
+      var wrap = document.getElementById('eapprovals-link-wrap');
+      if (!pkgField || !wrap) return;
+
+      function bindCopyButton() {
+        var copyBtn = document.getElementById('copy-eapprovals-link');
+        var link = document.getElementById('eapprovals-link');
+        if (!copyBtn || !link || !link.href) return;
+        copyBtn.addEventListener('click', function() {
+          navigator.clipboard.writeText(link.href)
+            .then(function() {
+              var prev = copyBtn.textContent;
+              copyBtn.textContent = 'Copied';
+              setTimeout(function() { copyBtn.textContent = prev; }, 1200);
+            })
+            .catch(function() {
+              copyBtn.textContent = 'Copy failed';
+              setTimeout(function() { copyBtn.textContent = 'Copy link'; }, 1200);
+            });
+        });
+      }
+
+      function refresh() {
+        var pkg = (pkgField.value || '').trim();
+        if (!pkg) {
+          wrap.innerHTML = '<span id="eapprovals-link">Link will appear after Package ID is entered.</span>';
+          return;
+        }
+        var href = 'https://www.eapprovals.cac.gov.on.ca/#/approval/' + encodeURIComponent(pkg);
+        wrap.innerHTML = '<a id="eapprovals-link" href="' + href + '" target="_blank" rel="noopener noreferrer">Open eApprovals package</a>' +
+          '<button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="copy-eapprovals-link">Copy link</button>';
+        bindCopyButton();
+      }
+
+      pkgField.addEventListener('input', refresh);
+      refresh();
+      bindCopyButton();
     })();
     </script>
 {% endblock %}

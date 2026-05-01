@@ -1,16 +1,19 @@
 from openpyxl import load_workbook
 import json
-import os
 
-WB = 'Agreements Log - FY26-27 Template (Update with Cluster Name) Interim for all Clusters.xlsx'
-OUT = 'field_lookups.json'
+WB = "Agreements Log - FY26-27 Template (Update with Cluster Name) Interim for all Clusters.xlsx"
+OUT = "field_lookups.json"
+
 
 def main():
     wb = load_workbook(WB, data_only=True)
     # try to find the 'do not modify' sheet which holds lookup columns
     sheet = None
     for name in wb.sheetnames:
-        if 'do not modify' in name.lower() or name.lower().replace(' ', '') == 'donotmodify':
+        if (
+            "do not modify" in name.lower()
+            or name.lower().replace(" ", "") == "donotmodify"
+        ):
             sheet = wb[name]
             break
     if sheet is None:
@@ -37,13 +40,13 @@ def main():
         if f is None:
             continue
         if f.startswith('"') and f.endswith('"'):
-            vals = [s.strip() for s in f.strip('"').split(',')]
+            vals = [s.strip() for s in f.strip('"').split(",")]
         else:
             # assume it's a range like 'Sheet2'!$A$1:$A$10 or a named range
             # strip sheet prefix if present
             rng = f.replace("$", "")
-            if '!' in rng:
-                _, rr = rng.split('!')
+            if "!" in rng:
+                _, rr = rng.split("!")
             else:
                 rr = rng
             rr = rr.strip('"')
@@ -61,14 +64,14 @@ def main():
             col = None
             if isinstance(sqref, str):
                 # take first cell
-                first = sqref.split(':')[0]
+                first = sqref.split(":")[0]
                 # remove row number
-                col = ''.join([ch for ch in first if ch.isalpha()])
+                col = "".join([ch for ch in first if ch.isalpha()])
             if col:
                 # find header value in that column in first 10 rows
                 for r in range(1, 11):
                     cell = sheet[f"{col}{r}"]
-                    if cell.value and str(cell.value).strip() != '':
+                    if cell.value and str(cell.value).strip() != "":
                         header = str(cell.value).strip()
                         lookups[header] = [v for v in vals if v is not None]
                         break
@@ -96,7 +99,10 @@ def main():
         # use that sheet as the lookup source only if its name indicates it's the lookup sheet
         lookup_sheet = None
         for name in wb.sheetnames:
-            if 'do not modify' in name.lower() or name.lower().replace(' ', '') == 'donotmodify':
+            if (
+                "do not modify" in name.lower()
+                or name.lower().replace(" ", "") == "donotmodify"
+            ):
                 lookup_sheet = wb[name]
                 break
 
@@ -104,20 +110,27 @@ def main():
             # first non-empty row as header row
             header_row = 1
             for r in range(1, min(lookup_sheet.max_row, 10) + 1):
-                rowvals = [lookup_sheet.cell(row=r, column=c).value for c in range(1, lookup_sheet.max_column+1)]
-                nonempty = [v for v in rowvals if v is not None and str(v).strip()!='']
+                rowvals = [
+                    lookup_sheet.cell(row=r, column=c).value
+                    for c in range(1, lookup_sheet.max_column + 1)
+                ]
+                nonempty = [
+                    v for v in rowvals if v is not None and str(v).strip() != ""
+                ]
                 if len(nonempty) >= 1:
                     header_row = r
                     break
-            for c in range(1, lookup_sheet.max_column+1):
+            for c in range(1, lookup_sheet.max_column + 1):
                 h = lookup_sheet.cell(row=header_row, column=c).value
                 if not h:
                     continue
                 # collect values below header
                 vals = []
-                for r in range(header_row+1, min(lookup_sheet.max_row, header_row+1000) + 1):
+                for r in range(
+                    header_row + 1, min(lookup_sheet.max_row, header_row + 1000) + 1
+                ):
                     v = lookup_sheet.cell(row=r, column=c).value
-                    if v is not None and str(v).strip() != '':
+                    if v is not None and str(v).strip() != "":
                         vals.append(str(v).strip())
                 uniq = list(dict.fromkeys(vals))
                 if uniq:
@@ -130,20 +143,32 @@ def main():
                 # detect header row for this sheet (first row with >=2 non-empty cells)
                 header_row = 1
                 for r in range(1, min(sh.max_row, 20) + 1):
-                    rowvals = [sh.cell(row=r, column=c).value for c in range(1, sh.max_column+1)]
-                    nonempty = [v for v in rowvals if v is not None and str(v).strip()!='']
+                    rowvals = [
+                        sh.cell(row=r, column=c).value
+                        for c in range(1, sh.max_column + 1)
+                    ]
+                    nonempty = [
+                        v for v in rowvals if v is not None and str(v).strip() != ""
+                    ]
                     if len(nonempty) >= 2:
                         header_row = r
                         break
 
                 for col_idx in range(1, sh.max_column + 1):
                     vals = []
-                    for r in range(header_row+1, min(sh.max_row, header_row+200) + 1):
+                    for r in range(
+                        header_row + 1, min(sh.max_row, header_row + 200) + 1
+                    ):
                         v = sh.cell(row=r, column=col_idx).value
-                        if v is not None and str(v).strip() != '':
+                        if v is not None and str(v).strip() != "":
                             vals.append(str(v).strip())
                     # filter out values that look like headers or sheet titles
-                    filtered = [v for v in vals if v.upper() not in (sh.title.upper(), 'TOTAL', 'INSERT ROWS ABOVE')]
+                    filtered = [
+                        v
+                        for v in vals
+                        if v.upper()
+                        not in (sh.title.upper(), "TOTAL", "INSERT ROWS ABOVE")
+                    ]
                     uniq = list(dict.fromkeys(filtered))
                     if 1 < len(uniq) <= 200:
                         key = f"{sname}!{col_idx}"
@@ -151,24 +176,28 @@ def main():
 
             # try to map candidates to headers in main sheet
             main = sheet
-            headers = []
             header_row = 1
             for r in range(1, 11):
-                rowvals = [main.cell(row=r, column=c).value for c in range(1, main.max_column+1)]
-                nonempty = [v for v in rowvals if v is not None and str(v).strip()!='']
+                rowvals = [
+                    main.cell(row=r, column=c).value
+                    for c in range(1, main.max_column + 1)
+                ]
+                nonempty = [
+                    v for v in rowvals if v is not None and str(v).strip() != ""
+                ]
                 if len(nonempty) >= 2:
                     header_row = r
                     break
-            for c in range(1, main.max_column+1):
+            for c in range(1, main.max_column + 1):
                 h = main.cell(row=header_row, column=c).value
                 if not h:
                     continue
                 h = str(h).strip()
                 # sample values below header
                 sample_vals = []
-                for r in range(header_row+1, min(main.max_row, header_row+200)+1):
+                for r in range(header_row + 1, min(main.max_row, header_row + 200) + 1):
                     v = main.cell(row=r, column=c).value
-                    if v is not None and str(v).strip()!='':
+                    if v is not None and str(v).strip() != "":
                         sample_vals.append(str(v).strip())
                 if not sample_vals:
                     continue
@@ -181,12 +210,13 @@ def main():
                         break
 
     # remove PowerAppsId if found
-    if '__PowerAppsId__' in lookups:
-        del lookups['__PowerAppsId__']
+    if "__PowerAppsId__" in lookups:
+        del lookups["__PowerAppsId__"]
 
-    with open(OUT, 'w', encoding='utf-8') as f:
+    with open(OUT, "w", encoding="utf-8") as f:
         json.dump(lookups, f, indent=2, ensure_ascii=False)
-    print('Wrote', OUT)
+    print("Wrote", OUT)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
