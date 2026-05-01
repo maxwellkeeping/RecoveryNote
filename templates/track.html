@@ -63,15 +63,6 @@
         box-shadow: 0 0 0 3px rgba(21,96,130,.15);
         outline: none;
       }
-      .copy-link-btn {
-        border: 1px solid #d1dbe8;
-        background: #fff;
-        color: #156082;
-        font-size: .68rem;
-        border-radius: 4px;
-        padding: 0 .35rem;
-        margin-left: .35rem;
-      }
 {% endblock %}
 
 {% block content %}
@@ -169,7 +160,6 @@
                        target="_blank" rel="noopener noreferrer" class="eapprovals-link">
                       {{ package_id }}
                     </a>
-                    <button type="button" class="copy-link-btn" data-link="https://www.eapprovals.cac.gov.on.ca/#/approval/{{ package_id }}">Copy</button>
                   {% else %}
                     <span class="text-muted">Not populated</span>
                   {% endif %}
@@ -265,20 +255,5 @@
         const isFiltered = q || cluster || status;
         el.textContent = isFiltered ? `Showing ${visible} of ${total}` : '';
       }
-
-      document.querySelectorAll('.copy-link-btn').forEach(function(btn) {
-        btn.addEventListener('click', function() {
-          var link = btn.getAttribute('data-link') || '';
-          if (!link) return;
-          navigator.clipboard.writeText(link).then(function() {
-            var prev = btn.textContent;
-            btn.textContent = 'Copied';
-            setTimeout(function() { btn.textContent = prev; }, 1200);
-          }).catch(function() {
-            btn.textContent = 'Failed';
-            setTimeout(function() { btn.textContent = 'Copy'; }, 1200);
-          });
-        });
-      });
     </script>
 {% endblock %}
