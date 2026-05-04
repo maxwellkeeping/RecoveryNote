@@ -6,10 +6,13 @@ from flask import (
     url_for,
     flash,
     jsonify,
+    make_response,
     send_file,
     send_from_directory,
     abort,
 )
+import csv
+import io
 import json
 import os
 import re
@@ -180,6 +183,43 @@ def init_db():
             END $$;
         """
         )
+        # Flat view for Power BI / reporting (CREATE OR REPLACE so it upgrades on restart)
+        cur.execute(
+            """
+            CREATE OR REPLACE VIEW submissions_flat AS
+            SELECT
+                s.id,
+                s.created_at,
+                s.data->>'AGREEMENT_ID'                    AS agreement_id,
+                s.data->>'AGREEMENT_NAME_DESCRIPTION'      AS agreement_name_description,
+                s.data->>'AGREEMENT_TYPE'                  AS agreement_type,
+                s.data->>'AGREEMENT_AUTHOR'                AS agreement_author,
+                s.data->>'STATUS'                          AS status,
+                s.data->>'CLIENT_CONTACT_NAME'             AS client_contact_name,
+                s.data->>'PREVIOUS_AGREEMENT'              AS previous_agreement,
+                s.data->>'eApprovals_Package_ID_253_YYYY'  AS eapprovals_package_id,
+                (s.data->>'START_DATE_YYYY_MM_DD')::DATE   AS start_date,
+                (s.data->>'END_DATE_YYYY_MM_DD')::DATE     AS end_date,
+                (s.data->>'ONE_TIME')::NUMERIC             AS one_time,
+                (s.data->>'ANNUAL')::NUMERIC               AS annual,
+                (s.data->>'MONTHLY_RECURRING')::NUMERIC    AS monthly_recurring,
+                (s.data->>'TOTAL_RECOVERY')::NUMERIC       AS total_recovery,
+                (s.data->>'ACTIVE_CARRY_TO_NEXT_FY')::NUMERIC AS active_carry_to_next_fy,
+                (s.data->>'FISCAL_YEAR_MONTHS')::INTEGER   AS fiscal_year_months,
+                (s.data->>'AGREEMENT_MONTHS_optional')::INTEGER AS agreement_months,
+                s.data->>'MONTH_BILLED'                    AS month_billed,
+                s.data->>'NEXT_FISCAL_RENEWAL'             AS next_fiscal_renewal,
+                s.data->>'SERVICE_OWNER'                   AS service_owner,
+                s.data->>'ITS_SERVICE'                     AS its_service,
+                s.data->>'ITS_SERVICE_TYPE'                AS its_service_type,
+                s.data->>'SOLUTION_CI'                     AS solution_ci,
+                s.data->>'IFIS_CODE'                       AS ifis_code,
+                s.data->>'SERVICE_OWNER_CONTACT_NAME'      AS service_owner_contact_name,
+                s.data->>'COMMENTS'                        AS comments
+            FROM submissions s;
+        """
+        )
+
         # Seed default accounts if users table is empty
         cur.execute("SELECT COUNT(*) FROM users")
         if cur.fetchone()[0] == 0:
@@ -228,6 +268,43 @@ def enforce_password_change():
 
 def sanitize_name(s):
     return re.sub(r"[^0-9A-Za-z]+", "_", s).strip("_")
+
+
+def _parse_amount(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.replace("$", "").replace(",", "")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _comments_amount(values):
+    for key in ("TOTAL_RECOVERY", "MONTHLY_RECURRING", "ANNUAL", "ONE_TIME"):
+        amount = _parse_amount((values or {}).get(key, ""))
+        if amount is not None:
+            return f"${amount:,.2f}"
+    return "<$>"
+
+
+def build_comments_text(values=None):
+    values = values or {}
+    cluster = (values.get("SERVICE_OWNER", "") or "").strip() or "<CLUSTER>"
+    amount = _comments_amount(values)
+    return (
+        "Please accept this Recovery Note (RN) as authorization for GovTechON (GTO), "
+        "Infrastructure Technology Operations Division (ITOD) to invoice "
+        f"{cluster}, <MINISTRY> the amount of {amount} under the cost center identified "
+        "for <SPECIFY>.\n\n"
+        "<PROVIDE DETAILS ON THE BUSINESS SOLUTION, RATIONALE, WIA/PROJECT AT A HIGH LEVEL "
+        "AND 2 TO 3 SENTENCES AT THE MOST>"
+    )
 
 
 def save_attachments(submission_id, files, existing=None):
@@ -371,6 +448,33 @@ def load_field_groups():
     return out
 
 
+@app.route("/export/csv")
+@admin_required
+def export_csv():
+    """Download all submissions as a flat CSV file (admin only)."""
+    groups = load_field_groups()
+    field_names = [it["name"] for _, items in groups for it in items]
+    headers = ["id", "created_at"] + field_names
+
+    with db_cursor() as cur:
+        cur.execute("SELECT id, created_at, data FROM submissions ORDER BY id")
+        rows = cur.fetchall()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(headers)
+    for row_id, created_at, data in rows:
+        d = data if isinstance(data, dict) else json.loads(data)
+        writer.writerow([row_id, created_at] + [d.get(f, "") for f in field_names])
+
+    response = make_response(buf.getvalue())
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.headers["Content-Disposition"] = (
+        "attachment; filename=submissions_export.csv"
+    )
+    return response
+
+
 @app.route("/map-lookups", methods=["GET", "POST"])
 @admin_required
 def map_lookups():
@@ -488,8 +592,9 @@ def logout():
 @login_required
 def form():
     groups = load_field_groups()
+    values = {"COMMENTS": build_comments_text({})}
     return render_template(
-        "form.html", groups=groups, values={}, edit_index=None, attachments=[]
+        "form.html", groups=groups, values=values, edit_index=None, attachments=[]
     )
 
 
@@ -503,11 +608,14 @@ def edit(id):
         flash("Submission not found.", "danger")
         return redirect(url_for("track"))
     groups = load_field_groups()
-    attachments = row[0].get("_attachments", []) if isinstance(row[0], dict) else []
+    values = dict(row[0]) if isinstance(row[0], dict) else {}
+    if not (values.get("COMMENTS") or "").strip():
+        values["COMMENTS"] = build_comments_text(values)
+    attachments = values.get("_attachments", [])
     return render_template(
         "form.html",
         groups=groups,
-        values=row[0],
+        values=values,
         edit_index=id,
         attachments=attachments,
     )
@@ -529,6 +637,9 @@ def submit():
     if missing:
         flash("Missing required fields: " + ", ".join(missing), "danger")
         return redirect(url_for("form"))
+
+    if not (values.get("COMMENTS") or "").strip():
+        values["COMMENTS"] = build_comments_text(values)
 
     values["_created_at"] = date.today().isoformat()
     with db_cursor() as cur:
@@ -583,6 +694,9 @@ def update(id):
             edit_index=id,
             attachments=row[0].get("_attachments", []),
         )
+
+    if not (values.get("COMMENTS") or "").strip():
+        values["COMMENTS"] = build_comments_text(values)
     values["_created_at"] = row[0].get("_created_at", date.today().isoformat())
     attachments = save_attachments(
         id,

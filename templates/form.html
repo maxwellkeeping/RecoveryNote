@@ -132,7 +132,6 @@
                     {% elif it.input_type == 'textarea' %}
                       <textarea name="{{ it.name }}" id="field-{{ it.name }}"
                                 class="form-control" rows="3"
-                                placeholder="{{ it.placeholder or '' }}"
                                 {% if it.required %}required{% endif %}>{{ values.get(it.name, '') }}</textarea>
 
                     {% elif it.name == 'eApprovals_Package_ID_253_YYYY' %}
@@ -381,6 +380,86 @@
       pkgField.addEventListener('input', refresh);
       refresh();
       bindCopyButton();
+    })();
+
+    // ── Comments auto-fill from selected data ───────────────────────────────
+    (function() {
+      var commentsEl = document.getElementById('field-COMMENTS');
+      if (!commentsEl) return;
+
+      var clusterEl = document.getElementById('field-SERVICE_OWNER');
+      var totalEl = document.getElementById('field-TOTAL_RECOVERY');
+      var monthlyEl = document.getElementById('field-MONTHLY_RECURRING');
+      var annualEl = document.getElementById('field-ANNUAL');
+      var oneTimeEl = document.getElementById('field-ONE_TIME');
+
+      function parseAmount(v) {
+        if (!v) return null;
+        var cleaned = String(v).replace(/[$,\s]/g, '');
+        if (!cleaned) return null;
+        var n = Number(cleaned);
+        return Number.isFinite(n) ? n : null;
+      }
+
+      function amountText() {
+        var candidates = [
+          totalEl && totalEl.value,
+          monthlyEl && monthlyEl.value,
+          annualEl && annualEl.value,
+          oneTimeEl && oneTimeEl.value
+        ];
+        for (var i = 0; i < candidates.length; i++) {
+          var n = parseAmount(candidates[i]);
+          if (n !== null) {
+            return '$' + n.toLocaleString('en-CA', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2
+            });
+          }
+        }
+        return '<$>';
+      }
+
+      function buildTemplate() {
+        var cluster = (clusterEl && clusterEl.value && clusterEl.value.trim()) || '<CLUSTER>';
+        var amount = amountText();
+        return 'Please accept this Recovery Note (RN) as authorization for GovTechON (GTO), ' +
+          'Infrastructure Technology Operations Division (ITOD) to invoice ' +
+          cluster + ', <MINISTRY> the amount of ' + amount +
+          ' under the cost center identified for <SPECIFY>.\n\n' +
+          '<PROVIDE DETAILS ON THE BUSINESS SOLUTION, RATIONALE, WIA/PROJECT AT A HIGH LEVEL AND 2 TO 3 SENTENCES AT THE MOST>';
+      }
+
+      var allowAuto = false;
+      var currentTemplate = buildTemplate();
+      if (!commentsEl.value.trim()) {
+        commentsEl.value = currentTemplate;
+        allowAuto = true;
+      } else {
+        allowAuto = (commentsEl.value === currentTemplate);
+      }
+
+      function refreshIfAuto() {
+        currentTemplate = buildTemplate();
+        if (allowAuto) {
+          commentsEl.value = currentTemplate;
+        }
+      }
+
+      commentsEl.addEventListener('input', function() {
+        if (!commentsEl.value.trim()) {
+          allowAuto = true;
+          refreshIfAuto();
+          return;
+        }
+        allowAuto = (commentsEl.value === currentTemplate);
+      });
+
+      [clusterEl, totalEl, monthlyEl, annualEl, oneTimeEl].forEach(function(el) {
+        if (!el) return;
+        el.addEventListener('input', refreshIfAuto);
+        el.addEventListener('change', refreshIfAuto);
+      });
     })();
     </script>
 {% endblock %}

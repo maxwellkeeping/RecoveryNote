@@ -209,7 +209,8 @@
     },
     "COMMENTS": {
       "display_label": "Comments",
-      "input_type": "textarea"
+      "input_type": "textarea",
+      "placeholder": "Please accept this Recovery Note (RN) as authorization for GovTechON (GTO), Infrastructure Technology Operations Division (ITOD) to invoice <CLUSTER>, <MINISTRY> the amount of <$> under the cost center identified for <SPECIFY>.\n\n<PROVIDE DETAILS ON THE BUSINESS SOLUTION, RATIONALE, WIA/PROJECT AT A HIGH LEVEL AND 2 TO 3 SENTENCES AT THE MOST>"
     },
     "IFIS CODE": {
       "placeholder": "000-000000-0000-000000-0000",
