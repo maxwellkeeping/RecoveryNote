@@ -89,6 +89,9 @@
                         {% for opt in it.options %}
                           <option value="{{ opt }}" {% if values.get(it.name) == opt %}selected{% endif %}>{{ opt }}</option>
                         {% endfor %}
+                        {% if values.get(it.name) and values.get(it.name) not in it.options %}
+                          <option value="{{ values.get(it.name) }}" selected>{{ values.get(it.name) }} (inactive)</option>
+                        {% endif %}
                       </select>
 
                     {% elif it.input_mask %}
@@ -201,6 +204,9 @@
               {% if edit_index %}
                 <a href="{{ url_for('generate', id=edit_index) }}" class="btn btn-generate-action">
                   ⬇ Generate Document
+                </a>
+                <a href="{{ url_for('copy_submission', id=edit_index) }}" class="btn btn-outline-primary">
+                  Copy As New
                 </a>
               {% else %}
                 <button type="submit" formaction="{{ url_for('submit') }}" formmethod="post"

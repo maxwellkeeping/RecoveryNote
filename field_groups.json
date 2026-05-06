@@ -99,6 +99,23 @@
     "AGREEMENT AUTHOR",
     "STATUS"
   ],
+  "copy_clear_fields": [
+    "END DATE\n(YYYY-MM-DD)",
+    "TERMINATION DATE (YYYY-MM-DD)",
+    "TERMINATION REASON",
+    "TERMINATION NOTES",
+    "CLOSURE DATE (YYYY-MM-DD)",
+    "CLOSURE REASON",
+    "CLOSURE NOTES",
+    "CLOSED DATE (YYYY-MM-DD)",
+    "CLOSE DATE (YYYY-MM-DD)",
+    "CLOSE REASON",
+    "CLOSE NOTES",
+    "EXPIRY DATE (YYYY-MM-DD)",
+    "EXPIRED DATE (YYYY-MM-DD)",
+    "EXPIRY REASON",
+    "EXPIRY NOTES"
+  ],
   "field_hints": {
     "AGREEMENT ID": {
       "placeholder": "e.g. GSIC-20260401-RN50027001",

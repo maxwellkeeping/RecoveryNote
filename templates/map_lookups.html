@@ -8,7 +8,7 @@
   </head>
   <body class="bg-light">
     <div class="container py-4">
-      <h1 class="mb-3">Map Fields to Lookup Lists</h1>
+      <h1 class="mb-3">Manage Field Lookups</h1>
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
           {% for category, msg in messages %}
@@ -17,25 +17,117 @@
         {% endif %}
       {% endwith %}
 
-      <form method="post">
-        <div class="row">
-          {% for label in labels %}
-            <div class="col-md-6 mb-2">
-              <label class="form-label">{{ label }}</label>
-              <select name="{{ sanitize_name(label) }}" class="form-select">
-                <option value="">(no mapping)</option>
-                {% for lk in lookups %}
-                  <option value="{{ lk }}" {% if mapping.get(label)==lk %}selected{% endif %}>{{ lk }}</option>
+      <div class="card mb-4">
+        <div class="card-header">Field-to-Lookup Mapping</div>
+        <div class="card-body">
+          <form method="post">
+            <input type="hidden" name="_action" value="save_mapping">
+            <div class="row">
+              {% for label in labels %}
+                <div class="col-md-6 mb-2">
+                  <label class="form-label">{{ label }}</label>
+                  <select name="{{ sanitize_name(label) }}" class="form-select">
+                    <option value="">(no mapping)</option>
+                    {% for lk in lookups %}
+                      <option value="{{ lk }}" {% if mapping.get(label)==lk %}selected{% endif %}>{{ lk }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              {% endfor %}
+            </div>
+            <div class="mt-3">
+              <button class="btn btn-primary" type="submit">Save mappings</button>
+              <a href="{{ url_for('admin') }}" class="btn btn-secondary">Back to admin</a>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Lookup Values</div>
+        <div class="card-body">
+          <p class="text-muted" style="font-size:.9rem;">Hide options to retire them from new selections while preserving historical records. Use unhide to restore visibility.</p>
+
+          {% for item in lookup_items %}
+            <div class="border rounded p-3 mb-3 bg-white">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="mb-0" style="font-size:1rem;">{{ item.key }}</h5>
+                <span class="badge text-bg-secondary">{{ item.kind }}</span>
+              </div>
+
+              {% if item.kind == 'list' %}
+                <div class="mb-2 d-flex flex-wrap gap-1">
+                  {% for opt in item.options %}
+                    <span class="badge {% if opt.active %}text-bg-success{% else %}text-bg-warning{% endif %}">{{ opt.value }}</span>
+                    <form method="post" class="d-inline">
+                      <input type="hidden" name="lookup_key" value="{{ item.key }}">
+                      <input type="hidden" name="lookup_value" value="{{ opt.value }}">
+                      <input type="hidden" name="_action" value="{{ 'lookup_hide' if opt.active else 'lookup_unhide' }}">
+                      <button class="btn btn-sm {% if opt.active %}btn-outline-warning{% else %}btn-outline-success{% endif %}" type="submit">
+                        {% if opt.active %}Hide{% else %}Unhide{% endif %}
+                      </button>
+                    </form>
+                  {% endfor %}
+                </div>
+                <form method="post" class="row g-2">
+                  <input type="hidden" name="_action" value="lookup_add">
+                  <input type="hidden" name="lookup_key" value="{{ item.key }}">
+                  <div class="col-md-8">
+                    <input class="form-control" type="text" name="lookup_value" placeholder="Add a new option">
+                  </div>
+                  <div class="col-md-4">
+                    <button class="btn btn-outline-primary w-100" type="submit">Add Option</button>
+                  </div>
+                </form>
+              {% else %}
+                {% for parent in item.parents %}
+                  <div class="border rounded p-2 mb-2">
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                      <strong>{{ parent.name }}</strong>
+                      <span class="badge {% if parent.active %}text-bg-success{% else %}text-bg-warning{% endif %}">{% if parent.active %}active{% else %}inactive{% endif %}</span>
+                      <form method="post" class="d-inline">
+                        <input type="hidden" name="lookup_key" value="{{ item.key }}">
+                        <input type="hidden" name="lookup_value" value="{{ parent.name }}">
+                        <input type="hidden" name="_action" value="{{ 'lookup_hide' if parent.active else 'lookup_unhide' }}">
+                        <button class="btn btn-sm {% if parent.active %}btn-outline-warning{% else %}btn-outline-success{% endif %}" type="submit">
+                          {% if parent.active %}Hide Parent{% else %}Unhide Parent{% endif %}
+                        </button>
+                      </form>
+                    </div>
+
+                    <div class="mb-2 d-flex flex-wrap gap-1">
+                      {% for child in parent.children %}
+                        <span class="badge {% if child.active %}text-bg-success{% else %}text-bg-warning{% endif %}">{{ child.value }}</span>
+                        <form method="post" class="d-inline">
+                          <input type="hidden" name="lookup_key" value="{{ item.key }}">
+                          <input type="hidden" name="cascade_parent" value="{{ parent.name }}">
+                          <input type="hidden" name="lookup_value" value="{{ child.value }}">
+                          <input type="hidden" name="_action" value="{{ 'lookup_hide' if child.active else 'lookup_unhide' }}">
+                          <button class="btn btn-sm {% if child.active %}btn-outline-warning{% else %}btn-outline-success{% endif %}" type="submit">
+                            {% if child.active %}Hide{% else %}Unhide{% endif %}
+                          </button>
+                        </form>
+                      {% endfor %}
+                    </div>
+
+                    <form method="post" class="row g-2">
+                      <input type="hidden" name="_action" value="lookup_add">
+                      <input type="hidden" name="lookup_key" value="{{ item.key }}">
+                      <input type="hidden" name="cascade_parent" value="{{ parent.name }}">
+                      <div class="col-md-8">
+                        <input class="form-control" type="text" name="lookup_value" placeholder="Add child option under {{ parent.name }}">
+                      </div>
+                      <div class="col-md-4">
+                        <button class="btn btn-outline-primary w-100" type="submit">Add Child</button>
+                      </div>
+                    </form>
+                  </div>
                 {% endfor %}
-              </select>
+              {% endif %}
             </div>
           {% endfor %}
         </div>
-        <div class="mt-3">
-          <button class="btn btn-primary" type="submit">Save mappings</button>
-          <a href="/" class="btn btn-secondary">Back to form</a>
-        </div>
-      </form>
+      </div>
     </div>
   </body>
 </html>

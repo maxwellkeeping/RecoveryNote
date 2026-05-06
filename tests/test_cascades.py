@@ -13,6 +13,10 @@ def sanitize_name(s):
     return re.sub(r"[^0-9A-Za-z]+", "_", s).strip("_")
 
 
+def norm_label(s):
+    return re.sub(r"\s+", " ", (s or "").replace("\n", " ")).strip()
+
+
 def load_field_groups_for_test():
     """Minimal reimplementation of load_field_groups to test cascade logic."""
     base = os.path.join(os.path.dirname(__file__), "..")
@@ -28,13 +32,19 @@ def load_field_groups_for_test():
     cascade_field_map = {}
     with open(lookup_path, "r", encoding="utf-8") as lf:
         raw = json.load(lf)
-        cascade_field_map = raw.pop("_cascade_fields", {})
+        cascade_field_map = {
+            norm_label(k): norm_label(v)
+            for k, v in (raw.pop("_cascade_fields", {}) or {}).items()
+        }
         for k, v in raw.items():
+            if k.startswith("_"):
+                continue
             nk = k.replace("\n", " ").strip()
             lookups[nk] = v
 
     with open(lookup_map, "r", encoding="utf-8") as mf:
-        mapping = json.load(mf)
+        raw_mapping = json.load(mf)
+        mapping = {norm_label(k): norm_label(v) for k, v in raw_mapping.items()}
 
     return groups, lookups, cascade_field_map, mapping
 

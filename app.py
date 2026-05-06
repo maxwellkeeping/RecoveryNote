@@ -342,6 +342,192 @@ def save_attachments(submission_id, files, existing=None):
     return out
 
 
+def _norm_label(s):
+    return re.sub(r"\s+", " ", (s or "").replace("\n", " ")).strip()
+
+
+def read_lookup_config():
+    """Load lookup values and metadata from field_lookups.json."""
+    raw = {}
+    if os.path.exists(LOOKUP_PATH):
+        with open(LOOKUP_PATH, "r", encoding="utf-8") as lf:
+            raw = json.load(lf)
+
+    cascade_field_map = {
+        _norm_label(k): _norm_label(v)
+        for k, v in (raw.get("_cascade_fields", {}) or {}).items()
+    }
+
+    inactive_map = {}
+    for key, vals in (raw.get("_inactive", {}) or {}).items():
+        nk = _norm_label(key)
+        if not isinstance(vals, list):
+            continue
+        inactive_map[nk] = [_norm_label(v) for v in vals if _norm_label(v)]
+
+    lookups = {}
+    for key, value in raw.items():
+        if key.startswith("_"):
+            continue
+        lookups[_norm_label(key)] = value
+
+    return lookups, cascade_field_map, inactive_map
+
+
+def write_lookup_config(lookups, cascade_field_map, inactive_map):
+    payload = {}
+    for key in sorted(lookups.keys()):
+        payload[key] = lookups[key]
+    if cascade_field_map:
+        payload["_cascade_fields"] = cascade_field_map
+
+    cleaned_inactive = {}
+    for key, vals in inactive_map.items():
+        uniq = sorted({_norm_label(v) for v in vals if _norm_label(v)})
+        if uniq:
+            cleaned_inactive[_norm_label(key)] = uniq
+    if cleaned_inactive:
+        payload["_inactive"] = cleaned_inactive
+
+    with open(LOOKUP_PATH, "w", encoding="utf-8") as lf:
+        json.dump(payload, lf, indent=2, ensure_ascii=False)
+
+
+def _active_lookup_value(lookup_key, lookup_val, inactive_map):
+    if isinstance(lookup_val, list):
+        inactive = set(inactive_map.get(_norm_label(lookup_key), []))
+        return [x for x in lookup_val if _norm_label(x) not in inactive]
+    if isinstance(lookup_val, dict):
+        parent_inactive = set(inactive_map.get(_norm_label(lookup_key), []))
+        out = {}
+        for parent, children in lookup_val.items():
+            if _norm_label(parent) in parent_inactive:
+                continue
+            if isinstance(children, list):
+                child_key = _norm_label(f"{lookup_key}::{parent}")
+                child_inactive = set(inactive_map.get(child_key, []))
+                out[parent] = [c for c in children if _norm_label(c) not in child_inactive]
+            else:
+                out[parent] = children
+        return out
+    return lookup_val
+
+
+def _add_lookup_option(lookups, lookup_key, value, cascade_parent=""):
+    lookup_key = _norm_label(lookup_key)
+    value = _norm_label(value)
+    cascade_parent = _norm_label(cascade_parent)
+    if not lookup_key or not value:
+        return False, "Lookup key and value are required."
+
+    current = lookups.get(lookup_key)
+    if cascade_parent:
+        if not isinstance(current, dict):
+            return False, "Selected lookup is not a cascading lookup."
+        children = current.get(cascade_parent)
+        if children is None:
+            current[cascade_parent] = []
+            children = current[cascade_parent]
+        if not isinstance(children, list):
+            return False, "Cascade parent does not contain a list of options."
+        if value not in children:
+            children.append(value)
+        return True, "Option added."
+
+    if current is None:
+        lookups[lookup_key] = [value]
+        return True, "Option added."
+    if not isinstance(current, list):
+        return False, "Selected lookup is not a simple list."
+    if value not in current:
+        current.append(value)
+    return True, "Option added."
+
+
+def _toggle_lookup_option(inactive_map, lookup_key, value, cascade_parent="", hide=True):
+    lookup_key = _norm_label(lookup_key)
+    value = _norm_label(value)
+    cascade_parent = _norm_label(cascade_parent)
+    if not lookup_key or not value:
+        return False, "Lookup key and value are required."
+
+    state_key = _norm_label(f"{lookup_key}::{cascade_parent}") if cascade_parent else lookup_key
+    state = set(inactive_map.get(state_key, []))
+    if hide:
+        state.add(value)
+    else:
+        state.discard(value)
+    if state:
+        inactive_map[state_key] = sorted(state)
+    elif state_key in inactive_map:
+        del inactive_map[state_key]
+    return True, "Option updated."
+
+
+COPY_REMOVE_FIELDS = ("AGREEMENT_ID", "_created_at", "_attachments", "_upload_id")
+DEFAULT_COPY_CLEAR_FIELDS = {
+    "END_DATE_YYYY_MM_DD",
+    "TERMINATION_DATE_YYYY_MM_DD",
+    "TERMINATION_REASON",
+    "TERMINATION_NOTES",
+    "CLOSURE_DATE_YYYY_MM_DD",
+    "CLOSURE_REASON",
+    "CLOSURE_NOTES",
+    "CLOSED_DATE_YYYY_MM_DD",
+    "CLOSE_DATE_YYYY_MM_DD",
+    "CLOSE_REASON",
+    "CLOSE_NOTES",
+    "EXPIRY_DATE_YYYY_MM_DD",
+    "EXPIRED_DATE_YYYY_MM_DD",
+    "EXPIRY_REASON",
+    "EXPIRY_NOTES",
+}
+
+
+def get_copy_clear_fields():
+    """Resolve copy-clear field names from field_groups.json when configured."""
+    try:
+        with open(FG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return set(DEFAULT_COPY_CLEAR_FIELDS)
+
+    if "copy_clear_fields" not in data:
+        return set(DEFAULT_COPY_CLEAR_FIELDS)
+
+    configured = data.get("copy_clear_fields")
+    if not isinstance(configured, list):
+        return set(DEFAULT_COPY_CLEAR_FIELDS)
+
+    out = set()
+    for field in configured:
+        text = str(field or "").strip()
+        if not text:
+            continue
+        out.add(text)
+        out.add(sanitize_name(text))
+    return out
+
+
+def prepare_copy_values(source_values):
+    """Prepare values for a copied agreement as a new draft submission."""
+    copied = dict(source_values or {})
+    source_agreement_id = (copied.get("AGREEMENT_ID") or "").strip()
+
+    for key in COPY_REMOVE_FIELDS:
+        copied.pop(key, None)
+
+    copied["STATUS"] = "Draft"
+    if source_agreement_id:
+        copied["PREVIOUS_AGREEMENT"] = source_agreement_id
+
+    for key in get_copy_clear_fields():
+        if key in copied:
+            copied[key] = ""
+
+    return copied
+
+
 def load_field_groups():
     with open(FG_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -349,25 +535,16 @@ def load_field_groups():
     mandatory = set(data.get("proposed_mandatory", []))
     field_hints = data.get("field_hints", {})
 
-    def _norm_label(s):
-        return re.sub(r"\s+", " ", (s or "").replace("\n", " ")).strip()
-
     field_hints_norm = {_norm_label(k): v for k, v in field_hints.items()}
-    # load lookups and mapping if present
-    lookups = {}
-    cascade_field_map = {}  # { dependent_label: parent_label }
-    if os.path.exists(LOOKUP_PATH):
-        with open(LOOKUP_PATH, "r", encoding="utf-8") as lf:
-            raw = json.load(lf)
-            cascade_field_map = raw.pop("_cascade_fields", {})
-            for k, v in raw.items():
-                nk = k.replace("\n", " ").strip()
-                lookups[nk] = v
+    lookups, cascade_field_map, inactive_map = read_lookup_config()
     mapping = {}
     if os.path.exists(LOOKUP_MAP):
         try:
             with open(LOOKUP_MAP, "r", encoding="utf-8") as mf:
-                mapping = json.load(mf)
+                raw_mapping = json.load(mf)
+                mapping = {
+                    _norm_label(k): _norm_label(v) for k, v in raw_mapping.items()
+                }
         except Exception:
             mapping = {}
     # normalize groups into list of (group_name, [ {label,name,required,...} ])
@@ -377,32 +554,39 @@ def load_field_groups():
         for h in fields:
             if not h:
                 continue
-            label = h.replace("\n", " ")
+            label = _norm_label(h)
             mapped_key = mapping.get(label)
+            resolved_lookup_key = mapped_key or label
             options = None
             cascade_data = None
             parent_label = cascade_field_map.get(label)
             cascade_from = sanitize_name(parent_label) if parent_label else None
-            if mapped_key:
-                lookup_val = lookups.get(mapped_key)
-            else:
-                lookup_val = lookups.get(label)
+            lookup_val = lookups.get(resolved_lookup_key)
             if cascade_from:
                 # This is a cascade child — get cascade data from parent's lookup
                 parent_mapped = mapping.get(parent_label)
+                parent_lookup_key = parent_mapped or parent_label
                 parent_lookup = (
                     lookups.get(parent_mapped)
                     if parent_mapped
                     else lookups.get(parent_label)
                 )
                 if isinstance(parent_lookup, dict):
-                    cascade_data = parent_lookup
+                    cascade_data = _active_lookup_value(
+                        parent_lookup_key, parent_lookup, inactive_map
+                    )
                     options = []  # options populated dynamically via JS
             elif isinstance(lookup_val, dict):
                 # This is a cascade parent — show top-level keys as options
-                options = list(lookup_val.keys())
+                options = list(
+                    _active_lookup_value(
+                        resolved_lookup_key, lookup_val, inactive_map
+                    ).keys()
+                )
             else:
-                options = lookup_val
+                options = _active_lookup_value(
+                    resolved_lookup_key, lookup_val, inactive_map
+                )
             if isinstance(options, list):
 
                 def _fix_govtech(s):
@@ -428,6 +612,7 @@ def load_field_groups():
             items.append(
                 {
                     "label": hint_data.get("display_label", label),
+                    "source_label": label,
                     "name": sanitize_name(h),
                     "required": h in mandatory,
                     "options": options,
@@ -482,38 +667,130 @@ def map_lookups():
     labels = []
     for g, items in groups:
         for it in items:
-            labels.append(it["label"])
+            labels.append(it["source_label"])
 
-    lookups = {}
-    if os.path.exists(LOOKUP_PATH):
-        with open(LOOKUP_PATH, "r", encoding="utf-8") as lf:
-            raw = json.load(lf)
-            lookups = {k.replace("\n", " ").strip(): v for k, v in raw.items()}
+    lookups, cascade_map, inactive_map = read_lookup_config()
 
     mapping = {}
     if os.path.exists(LOOKUP_MAP):
         with open(LOOKUP_MAP, "r", encoding="utf-8") as mf:
             try:
-                mapping = json.load(mf)
+                raw_mapping = json.load(mf)
+                mapping = {
+                    _norm_label(k): _norm_label(v)
+                    for k, v in raw_mapping.items()
+                }
             except Exception:
                 mapping = {}
 
     if request.method == "POST":
-        newmap = {}
-        for form_key, sel in request.form.items():
-            if not sel:
-                continue
-            for label in labels:
-                if sanitize_name(label) == form_key:
-                    newmap[label] = sel
-                    break
-        with open(LOOKUP_MAP, "w", encoding="utf-8") as mf:
-            json.dump(newmap, mf, indent=2, ensure_ascii=False)
-        flash("Lookup mappings saved.", "success")
+        action = request.form.get("_action", "save_mapping")
+
+        if action == "save_mapping":
+            newmap = {}
+            for form_key, sel in request.form.items():
+                if form_key == "_action" or not sel:
+                    continue
+                for label in labels:
+                    if sanitize_name(label) == form_key:
+                        newmap[label] = _norm_label(sel)
+                        break
+            with open(LOOKUP_MAP, "w", encoding="utf-8") as mf:
+                json.dump(newmap, mf, indent=2, ensure_ascii=False)
+            flash("Lookup mappings saved.", "success")
+            return redirect(url_for("map_lookups"))
+
+        lookup_key = request.form.get("lookup_key", "")
+        lookup_value = request.form.get("lookup_value", "")
+        cascade_parent = request.form.get("cascade_parent", "")
+
+        if action == "lookup_add":
+            ok, msg = _add_lookup_option(lookups, lookup_key, lookup_value, cascade_parent)
+            if ok:
+                _toggle_lookup_option(
+                    inactive_map,
+                    lookup_key,
+                    lookup_value,
+                    cascade_parent=cascade_parent,
+                    hide=False,
+                )
+                write_lookup_config(lookups, cascade_map, inactive_map)
+                flash(msg, "success")
+            else:
+                flash(msg, "danger")
+            return redirect(url_for("map_lookups"))
+
+        if action in ("lookup_hide", "lookup_unhide"):
+            ok, msg = _toggle_lookup_option(
+                inactive_map,
+                lookup_key,
+                lookup_value,
+                cascade_parent=cascade_parent,
+                hide=(action == "lookup_hide"),
+            )
+            if ok:
+                write_lookup_config(lookups, cascade_map, inactive_map)
+                flash(msg, "success")
+            else:
+                flash(msg, "danger")
+            return redirect(url_for("map_lookups"))
+
+        flash("Unknown lookup action.", "danger")
         return redirect(url_for("map_lookups"))
 
+    lookup_items = []
+    for key in sorted(lookups.keys()):
+        value = lookups[key]
+        if isinstance(value, list):
+            inactive = set(inactive_map.get(_norm_label(key), []))
+            options = [
+                {"value": v, "active": _norm_label(v) not in inactive} for v in value
+            ]
+            lookup_items.append(
+                {
+                    "key": key,
+                    "kind": "list",
+                    "options": options,
+                    "parents": [],
+                }
+            )
+        elif isinstance(value, dict):
+            parent_inactive = set(inactive_map.get(_norm_label(key), []))
+            parents = []
+            for parent_name, children in value.items():
+                child_state_key = _norm_label(f"{key}::{parent_name}")
+                child_inactive = set(inactive_map.get(child_state_key, []))
+                child_options = []
+                if isinstance(children, list):
+                    child_options = [
+                        {
+                            "value": c,
+                            "active": _norm_label(c) not in child_inactive,
+                        }
+                        for c in children
+                    ]
+                parents.append(
+                    {
+                        "name": parent_name,
+                        "active": _norm_label(parent_name) not in parent_inactive,
+                        "children": child_options,
+                    }
+                )
+            lookup_items.append(
+                {
+                    "key": key,
+                    "kind": "cascade",
+                    "options": [],
+                    "parents": parents,
+                }
+            )
+
     return render_template(
-        "map_lookups.html", labels=labels, lookups=list(lookups.keys()), mapping=mapping
+        "map_lookups.html",
+        labels=labels,
+        lookups=list(lookups.keys()),
+        mapping=mapping,
+        lookup_items=lookup_items,
     )
 
 
@@ -593,9 +870,28 @@ def logout():
 def form():
     groups = load_field_groups()
     values = {"COMMENTS": build_comments_text({})}
+    copy_from = request.args.get("copy_from", type=int)
+    if copy_from is not None:
+        with db_cursor() as cur:
+            cur.execute("SELECT data FROM submissions WHERE id = %s", (copy_from,))
+            row = cur.fetchone()
+        if row is None:
+            flash("Source submission for copy was not found.", "danger")
+            return redirect(url_for("track"))
+        source_values = dict(row[0]) if isinstance(row[0], dict) else {}
+        values = prepare_copy_values(source_values)
+        if not (values.get("COMMENTS") or "").strip():
+            values["COMMENTS"] = build_comments_text(values)
+        flash("Copy loaded. Update the new Agreement ID before saving.", "info")
     return render_template(
         "form.html", groups=groups, values=values, edit_index=None, attachments=[]
     )
+
+
+@app.route("/copy/<int:id>", methods=["GET"])
+@login_required
+def copy_submission(id):
+    return redirect(url_for("form", copy_from=id))
 
 
 @app.route("/edit/<int:id>", methods=["GET"])

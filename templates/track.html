@@ -187,6 +187,10 @@
                        class="btn btn-action btn-generate" title="Download Recovery Note docx">
                       ⬇ Doc
                     </a>
+                    <a href="{{ url_for('copy_submission', id=row.id) }}"
+                       class="btn btn-action btn-outline-primary" title="Create a new agreement by copying this one">
+                      ⧉ Copy
+                    </a>
                     <form method="post" action="{{ url_for('delete', id=row.id) }}"
                           onsubmit="return confirm('Delete this agreement?')">
                       <button type="submit" class="btn btn-action btn-delete" title="Delete record">
