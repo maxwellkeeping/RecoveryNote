@@ -17,30 +17,8 @@
         {% endif %}
       {% endwith %}
 
-      <div class="card mb-4">
-        <div class="card-header">Field-to-Lookup Mapping</div>
-        <div class="card-body">
-          <form method="post">
-            <input type="hidden" name="_action" value="save_mapping">
-            <div class="row">
-              {% for label in labels %}
-                <div class="col-md-6 mb-2">
-                  <label class="form-label">{{ label }}</label>
-                  <select name="{{ sanitize_name(label) }}" class="form-select">
-                    <option value="">(no mapping)</option>
-                    {% for lk in lookups %}
-                      <option value="{{ lk }}" {% if mapping.get(label)==lk %}selected{% endif %}>{{ lk }}</option>
-                    {% endfor %}
-                  </select>
-                </div>
-              {% endfor %}
-            </div>
-            <div class="mt-3">
-              <button class="btn btn-primary" type="submit">Save mappings</button>
-              <a href="{{ url_for('admin') }}" class="btn btn-secondary">Back to admin</a>
-            </div>
-          </form>
-        </div>
+      <div class="mb-3">
+        <a href="{{ url_for('admin') }}" class="btn btn-secondary">Back to admin</a>
       </div>
 
       <div class="card">
@@ -54,6 +32,9 @@
                 <h5 class="mb-0" style="font-size:1rem;">{{ item.key }}</h5>
                 <span class="badge text-bg-secondary">{{ item.kind }}</span>
               </div>
+              {% if item.used_by %}
+                <p class="text-muted mb-2" style="font-size:.85rem;">Used by: {{ item.used_by|join(', ') }}</p>
+              {% endif %}
 
               {% if item.kind == 'list' %}
                 <div class="mb-2 d-flex flex-wrap gap-1">

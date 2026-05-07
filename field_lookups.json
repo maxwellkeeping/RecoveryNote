@@ -12,10 +12,27 @@
     "9",
     "10",
     "11",
+    "12"
+  ],
+  "# AGREEMENT MONTHS": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "11",
     "12",
     "13",
     "14",
-    "15"
+    "15",
+    "16",
+    "36"
   ],
   "ACTIVE CARRY TO NEXT FY": [
     "Yes",
@@ -90,7 +107,8 @@
     "Justice Technology Services (JTS) - 700",
     "Land and Resources Cluster (LRC) - 800",
     "GovTech ON - Cyber Security (CSD) - 900",
-    "GovTech ON - Technology Policy & Standards Development (TPSD) - 900"
+    "GovTech ON - Technology Policy & Standards Development (TPSD) - 900",
+    "GovTech ON - Enterprise Architecture"
   ],
   "FY RENEWAL": [
     "Yes",
@@ -180,5 +198,10 @@
   ],
   "_cascade_fields": {
     "ITS SERVICE TYPE": "ITS SERVICE"
+  },
+  "_inactive": {
+    "CLIENT CLUSTER": [
+      "GovTech ON - Enterprise Architecture"
+    ]
   }
 }

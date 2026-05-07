@@ -86,30 +86,6 @@ def test_active_lookup_value_filters_cascade_values():
     assert active["PROCUREMENT-SOFTWARE"] == ["SOFTWARE-ORACLE"]
 
 
-def test_map_lookups_save_mapping_post(tmp_path, monkeypatch):
-    lookup_path = tmp_path / "field_lookups.json"
-    mapping_path = tmp_path / "lookup_mappings.json"
-    lookup_path.write_text(json.dumps({"STATUS": ["Draft", "Active"]}), encoding="utf-8")
-    mapping_path.write_text("{}", encoding="utf-8")
-
-    monkeypatch.setattr(app_module, "LOOKUP_PATH", str(lookup_path))
-    monkeypatch.setattr(app_module, "LOOKUP_MAP", str(mapping_path))
-    monkeypatch.setattr(
-        app_module,
-        "load_field_groups",
-        lambda: [("Agreement", [{"source_label": "STATUS"}])],
-    )
-
-    with app_module.app.test_request_context(
-        "/map-lookups", method="POST", data={"_action": "save_mapping", "STATUS": "STATUS"}
-    ):
-        response = app_module.map_lookups.__wrapped__()
-
-    assert response.status_code == 302
-    saved = json.loads(mapping_path.read_text(encoding="utf-8"))
-    assert saved == {"STATUS": "STATUS"}
-
-
 def test_map_lookups_hide_and_unhide_option(tmp_path, monkeypatch):
     lookup_path = tmp_path / "field_lookups.json"
     mapping_path = tmp_path / "lookup_mappings.json"
@@ -186,3 +162,119 @@ def test_map_lookups_add_cascade_child_option(tmp_path, monkeypatch):
     assert response.status_code == 302
     cfg = json.loads(lookup_path.read_text(encoding="utf-8"))
     assert "SOFTWARE-NEW" in cfg["SERVICE"]["PROCUREMENT-SOFTWARE"]
+
+
+def test_lookup_add_propagates_to_form_for_mapped_field(tmp_path, monkeypatch):
+    lookup_path = tmp_path / "field_lookups.json"
+    mapping_path = tmp_path / "lookup_mappings.json"
+    fg_path = tmp_path / "field_groups.json"
+
+    lookup_path.write_text(
+        json.dumps({"SERVER OWNER": ["DCO Business Services"]}),
+        encoding="utf-8",
+    )
+    mapping_path.write_text(
+        json.dumps({"SERVICE OWNER": "SERVER OWNER"}),
+        encoding="utf-8",
+    )
+    fg_path.write_text(
+        json.dumps(
+            {
+                "groups": {"Service": ["SERVICE OWNER"]},
+                "proposed_mandatory": [],
+                "field_hints": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(app_module, "LOOKUP_PATH", str(lookup_path))
+    monkeypatch.setattr(app_module, "LOOKUP_MAP", str(mapping_path))
+    monkeypatch.setattr(app_module, "FG_PATH", str(fg_path))
+
+    with app_module.app.test_request_context(
+        "/map-lookups",
+        method="POST",
+        data={
+            "_action": "lookup_add",
+            "lookup_key": "SERVER OWNER",
+            "lookup_value": "Telecom",
+        },
+    ):
+        response = app_module.map_lookups.__wrapped__()
+
+    assert response.status_code == 302
+
+    groups = app_module.load_field_groups()
+    service_owner = None
+    for _, items in groups:
+        for item in items:
+            if item.get("source_label") == "SERVICE OWNER":
+                service_owner = item
+                break
+
+    assert service_owner is not None
+    assert "Telecom" in service_owner["options"]
+
+
+def test_month_number_limits_use_separate_sources(tmp_path, monkeypatch):
+    fg_path = tmp_path / "field_groups.json"
+    lookup_path = tmp_path / "field_lookups.json"
+    mapping_path = tmp_path / "lookup_mappings.json"
+
+    fg_path.write_text(
+        json.dumps(
+            {
+                "groups": {
+                    "Financial": [
+                        "FISCAL YEAR # MONTHS",
+                        "AGREEMENT # MONTHS (optional)",
+                    ]
+                },
+                "proposed_mandatory": [],
+                "field_hints": {
+                    "FISCAL YEAR # MONTHS": {
+                        "input_type": "number",
+                        "min": "1",
+                        "max": "12",
+                        "placeholder": "1 - 12",
+                    },
+                    "AGREEMENT # MONTHS (optional)": {
+                        "input_type": "number",
+                        "min": "1",
+                        "max": "12",
+                        "placeholder": "1 - 12",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    lookup_path.write_text(
+        json.dumps(
+            {
+                "# FISCAL MONTHS": [str(i) for i in range(0, 16)],
+                "# AGREEMENT MONTHS": [str(i) for i in range(0, 19)],
+            }
+        ),
+        encoding="utf-8",
+    )
+    mapping_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(app_module, "FG_PATH", str(fg_path))
+    monkeypatch.setattr(app_module, "LOOKUP_PATH", str(lookup_path))
+    monkeypatch.setattr(app_module, "LOOKUP_MAP", str(mapping_path))
+
+    groups = app_module.load_field_groups()
+    month_fields = {}
+    for _, items in groups:
+        for item in items:
+            month_fields[item["source_label"]] = item
+
+    fiscal = month_fields["FISCAL YEAR # MONTHS"]
+    agreement = month_fields["AGREEMENT # MONTHS (optional)"]
+
+    assert fiscal["input_max"] == "12"
+    assert agreement["input_max"] == "18"
+    assert fiscal["placeholder"] == "1 - 12"
+    assert agreement["placeholder"] == "1 - 18"

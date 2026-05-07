@@ -549,6 +549,18 @@ def load_field_groups():
             mapping = {}
     # normalize groups into list of (group_name, [ {label,name,required,...} ])
     out = []
+    month_field_sources = {
+        "FISCAL YEAR # MONTHS": {
+            "primary": "# FISCAL MONTHS",
+            "fallback": "# FISCAL MONTHS",
+            "cap": 12,
+        },
+        "AGREEMENT # MONTHS (optional)": {
+            "primary": "# AGREEMENT MONTHS",
+            "fallback": "# FISCAL MONTHS",
+            "cap": None,
+        },
+    }
     for gname, fields in groups.items():
         items = []
         for h in fields:
@@ -557,6 +569,14 @@ def load_field_groups():
             label = _norm_label(h)
             mapped_key = mapping.get(label)
             resolved_lookup_key = mapped_key or label
+            if not mapped_key and label in month_field_sources:
+                source_cfg = month_field_sources[label]
+                primary_key = source_cfg["primary"]
+                fallback_key = source_cfg.get("fallback")
+                if primary_key in lookups:
+                    resolved_lookup_key = primary_key
+                elif fallback_key and fallback_key in lookups:
+                    resolved_lookup_key = fallback_key
             options = None
             cascade_data = None
             parent_label = cascade_field_map.get(label)
@@ -609,6 +629,31 @@ def load_field_groups():
             hint_data = field_hints.get(label) or field_hints_norm.get(
                 _norm_label(label), {}
             )
+            input_type = hint_data.get("input_type", "text")
+            input_min = hint_data.get("min", "")
+            input_max = hint_data.get("max", "")
+            placeholder = hint_data.get("placeholder", "")
+
+            # For month count inputs, keep max aligned with numeric lookup values.
+            if input_type == "number" and isinstance(lookup_val, list):
+                numeric_vals = []
+                for raw in lookup_val:
+                    text = str(raw or "").strip()
+                    if not text or not re.fullmatch(r"-?\d+", text):
+                        numeric_vals = []
+                        break
+                    numeric_vals.append(int(text))
+                if numeric_vals:
+                    derived_max = max(numeric_vals)
+                    if label in month_field_sources:
+                        cap = month_field_sources[label].get("cap")
+                        if isinstance(cap, int) and cap > 0:
+                            derived_max = min(derived_max, cap)
+                    if derived_max > 0:
+                        input_max = str(derived_max)
+                        min_text = str(input_min).strip() or "1"
+                        placeholder = f"{min_text} - {input_max}"
+
             items.append(
                 {
                     "label": hint_data.get("display_label", label),
@@ -618,12 +663,12 @@ def load_field_groups():
                     "options": options,
                     "cascade_data": cascade_data,
                     "cascade_from": cascade_from,
-                    "placeholder": hint_data.get("placeholder", ""),
+                    "placeholder": placeholder,
                     "hint": hint_data.get("hint", ""),
                     "compound": hint_data.get("compound", ""),
-                    "input_type": hint_data.get("input_type", "text"),
-                    "input_min": hint_data.get("min", ""),
-                    "input_max": hint_data.get("max", ""),
+                    "input_type": input_type,
+                    "input_min": input_min,
+                    "input_max": input_max,
                     "input_step": hint_data.get("step", ""),
                     "input_mask": hint_data.get("input_mask", ""),
                 }
@@ -663,42 +708,46 @@ def export_csv():
 @app.route("/map-lookups", methods=["GET", "POST"])
 @admin_required
 def map_lookups():
-    groups = load_field_groups()
-    labels = []
-    for g, items in groups:
-        for it in items:
-            labels.append(it["source_label"])
-
     lookups, cascade_map, inactive_map = read_lookup_config()
+    field_usage = {}
+
+    try:
+        with open(FG_PATH, "r", encoding="utf-8") as f:
+            groups_data = json.load(f).get("groups", {})
+    except Exception:
+        groups_data = {}
 
     mapping = {}
     if os.path.exists(LOOKUP_MAP):
-        with open(LOOKUP_MAP, "r", encoding="utf-8") as mf:
-            try:
+        try:
+            with open(LOOKUP_MAP, "r", encoding="utf-8") as mf:
                 raw_mapping = json.load(mf)
                 mapping = {
-                    _norm_label(k): _norm_label(v)
-                    for k, v in raw_mapping.items()
+                    _norm_label(k): _norm_label(v) for k, v in raw_mapping.items()
                 }
-            except Exception:
-                mapping = {}
+        except Exception:
+            mapping = {}
+
+    for fields in groups_data.values():
+        if not isinstance(fields, list):
+            continue
+        for label in fields:
+            nlabel = _norm_label(label)
+            if not nlabel:
+                continue
+            resolved_lookup = mapping.get(nlabel, nlabel)
+            field_usage.setdefault(resolved_lookup, set()).add(nlabel)
+
+    for child_label, parent_label in cascade_map.items():
+        parent = _norm_label(parent_label)
+        child = _norm_label(child_label)
+        if not parent or not child:
+            continue
+        parent_lookup = mapping.get(parent, parent)
+        field_usage.setdefault(parent_lookup, set()).add(child)
 
     if request.method == "POST":
-        action = request.form.get("_action", "save_mapping")
-
-        if action == "save_mapping":
-            newmap = {}
-            for form_key, sel in request.form.items():
-                if form_key == "_action" or not sel:
-                    continue
-                for label in labels:
-                    if sanitize_name(label) == form_key:
-                        newmap[label] = _norm_label(sel)
-                        break
-            with open(LOOKUP_MAP, "w", encoding="utf-8") as mf:
-                json.dump(newmap, mf, indent=2, ensure_ascii=False)
-            flash("Lookup mappings saved.", "success")
-            return redirect(url_for("map_lookups"))
+        action = request.form.get("_action", "")
 
         lookup_key = request.form.get("lookup_key", "")
         lookup_value = request.form.get("lookup_value", "")
@@ -752,6 +801,7 @@ def map_lookups():
                     "kind": "list",
                     "options": options,
                     "parents": [],
+                    "used_by": sorted(field_usage.get(key, set())),
                 }
             )
         elif isinstance(value, dict):
@@ -782,14 +832,12 @@ def map_lookups():
                     "kind": "cascade",
                     "options": [],
                     "parents": parents,
+                    "used_by": sorted(field_usage.get(key, set())),
                 }
             )
 
     return render_template(
         "map_lookups.html",
-        labels=labels,
-        lookups=list(lookups.keys()),
-        mapping=mapping,
         lookup_items=lookup_items,
     )
 
