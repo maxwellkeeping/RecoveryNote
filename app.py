@@ -8,19 +8,20 @@ from flask import (
     jsonify,
     make_response,
     send_file,
-    send_from_directory,
     abort,
 )
 import csv
 import io
 import json
 import os
+import pathlib
 import re
 import sys
 import hashlib
 from contextlib import contextmanager
 from datetime import date
 from functools import wraps
+from urllib.parse import urljoin, urlparse
 
 import psycopg2
 import psycopg2.extras
@@ -32,7 +33,8 @@ from flask_login import (
     login_required,
     current_user,
 )
-from werkzeug.utils import secure_filename
+from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import safe_join, secure_filename
 from tools import generate_docx
 
 # --- Load .env if present ---
@@ -118,8 +120,44 @@ def admin_required(f):
 
 
 def hash_password(password):
-    """Simple SHA-256 hash. Adequate for PoC; upgrade to bcrypt for production."""
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    """Return a strong password hash for storage."""
+    return generate_password_hash(password)
+
+
+def _is_legacy_sha256_hash(stored_hash):
+    return bool(re.fullmatch(r"[0-9a-f]{64}", (stored_hash or "")))
+
+
+def verify_password(stored_hash, password):
+    """Verify password against modern hashes and legacy SHA-256 hashes."""
+    if not stored_hash:
+        return False
+    if _is_legacy_sha256_hash(stored_hash):
+        return hashlib.sha256(password.encode("utf-8")).hexdigest() == stored_hash
+    try:
+        return check_password_hash(stored_hash, password)
+    except (ValueError, TypeError):
+        return False
+
+
+def _is_safe_redirect_target(target):
+    if not target:
+        return False
+    ref_url = urlparse(request.host_url)
+    test_url = urlparse(urljoin(request.host_url, target))
+    return test_url.scheme in ("http", "https") and ref_url.netloc == test_url.netloc
+
+
+def _submission_upload_dir(submission_id):
+    """Resolve upload directory safely under UPLOADS_DIR for a numeric submission id."""
+    sid = str(submission_id).strip()
+    if not re.fullmatch(r"\d+", sid):
+        raise ValueError("Invalid submission id for upload path")
+    uploads_root = pathlib.Path(UPLOADS_DIR).resolve()
+    target = (uploads_root / sid).resolve()
+    if uploads_root not in target.parents and target != uploads_root:
+        raise ValueError("Upload path escapes root")
+    return str(target)
 
 
 @contextmanager
@@ -305,7 +343,7 @@ def save_attachments(submission_id, files, existing=None):
     if not files:
         return existing
 
-    target_dir = os.path.join(UPLOADS_DIR, str(submission_id))
+    target_dir = _submission_upload_dir(submission_id)
     os.makedirs(target_dir, exist_ok=True)
 
     out = list(existing)
@@ -321,13 +359,17 @@ def save_attachments(submission_id, files, existing=None):
         stem, ext = os.path.splitext(base)
         candidate = base
         n = 1
-        while candidate in existing_names or os.path.exists(
-            os.path.join(target_dir, candidate)
+        candidate_path = safe_join(target_dir, candidate)
+        while candidate in existing_names or (
+            candidate_path and os.path.exists(candidate_path)
         ):
             candidate = f"{stem}_{n}{ext}"
+            candidate_path = safe_join(target_dir, candidate)
             n += 1
 
-        f.save(os.path.join(target_dir, candidate))
+        if not candidate_path:
+            continue
+        f.save(candidate_path)
         existing_names.add(candidate)
         out.append({"name": original, "stored": candidate})
 
@@ -866,13 +908,25 @@ def login():
                 "danger",
             )
             return render_template("login.html")
-        if row and row[2] == hash_password(password):
+        if row and verify_password(row[2], password):
+            if _is_legacy_sha256_hash(row[2]):
+                try:
+                    with db_cursor() as cur:
+                        cur.execute(
+                            "UPDATE users SET password = %s WHERE id = %s",
+                            (hash_password(password), row[0]),
+                        )
+                except Exception:
+                    # Keep login flow working even if opportunistic hash upgrade fails.
+                    pass
             user = User(row[0], row[1], row[3], bool(row[4]))
             login_user(user)
             if user.must_change_password:
                 return redirect(url_for("change_password"))
             next_page = request.args.get("next")
-            return redirect(next_page or url_for("track"))
+            if next_page and _is_safe_redirect_target(next_page):
+                return redirect(next_page)
+            return redirect(url_for("track"))
         flash("Invalid username or password.", "danger")
     return render_template("login.html")
 
@@ -1116,9 +1170,16 @@ def download_attachment(id, filename):
     if filename not in allowed:
         abort(404)
 
-    return send_from_directory(
-        os.path.join(UPLOADS_DIR, str(id)), filename, as_attachment=True
-    )
+    try:
+        target_dir = _submission_upload_dir(id)
+    except ValueError:
+        abort(404)
+
+    file_path = safe_join(target_dir, filename)
+    if not file_path or not os.path.isfile(file_path):
+        abort(404)
+
+    return send_file(file_path, as_attachment=True, download_name=filename)
 
 
 @app.route("/submissions", methods=["GET"])

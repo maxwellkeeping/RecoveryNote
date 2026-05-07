@@ -12,6 +12,9 @@ on:
           - "false"
           - "true"
 
+permissions:
+  contents: read
+
 jobs:
   deploy-staging:
     runs-on: ubuntu-latest
