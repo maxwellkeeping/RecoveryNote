@@ -303,7 +303,7 @@
 
       // If editing, parse existing value into sub-fields
       if (idField.value) {
-        var parts = idField.value.match(/^([A-Z]+)-(\d{8})-RN(\d+?)(\d{2})(\d{3})$/);
+        var parts = idField.value.match(/^([A-Z]+)-(\d{8})-RN(\d+?)(\d{2})(\d{3,})$/);
         if (parts) {
           var opts = cluster.options;
           for (var i = 0; i < opts.length; i++) {
@@ -337,8 +337,12 @@
         var cp = clusterParts();
         var fy = fyend.value.trim();
         if (!cp.abbr || d.length !== 8) return;
-        var prefix = cp.abbr + '-' + d + '-RN' + cp.num + fy;
-        fetch('/api/next-seq?prefix=' + encodeURIComponent(prefix))
+        var query = new URLSearchParams({
+          cluster_abbr: cp.abbr,
+          cluster_num: cp.num,
+          fy: fy
+        });
+        fetch('/api/next-seq?' + query.toString())
           .then(function(r) { return r.json(); })
           .then(function(data) {
             seqEl.value = String(data.seq).padStart(3, '0');

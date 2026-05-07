@@ -1154,24 +1154,40 @@ def delete(id):
 
 @app.route("/api/next-seq", methods=["GET"])
 def next_seq():
-    """Return the next available 3-digit sequence for a given ID prefix."""
+    """Return the next available sequence for Agreement ID generation."""
+    cluster_abbr = request.args.get("cluster_abbr", "").strip().upper()
+    cluster_num = request.args.get("cluster_num", "").strip()
+    fy = request.args.get("fy", "").strip()
     prefix = request.args.get("prefix", "").strip()
-    if not prefix:
+    if not (cluster_abbr and cluster_num and fy) and not prefix:
         return jsonify({"seq": 1})
     field = sanitize_name("AGREEMENT ID")
     try:
         with db_cursor() as cur:
             cur.execute(
-                "SELECT data->>%s FROM submissions WHERE data->>%s LIKE %s",
-                (field, field, prefix + "%"),
+                "SELECT data->>%s FROM submissions WHERE data->>%s IS NOT NULL",
+                (field, field),
             )
             rows = cur.fetchall()
         existing = []
-        for (val,) in rows:
-            if val and val.startswith(prefix):
-                tail = val[len(prefix) :]
-                if tail.isdigit() and len(tail) == 3:
-                    existing.append(int(tail))
+        if cluster_abbr and cluster_num and fy:
+            # Format: <ABBR>-<YYYYMMDD>-RN<CLUSTER_NUM><FY><SEQUENCE>
+            patt = re.compile(
+                rf"^{re.escape(cluster_abbr)}-\d{{8}}-RN{re.escape(cluster_num)}{re.escape(fy)}(\d+)$"
+            )
+            for (val,) in rows:
+                if not val:
+                    continue
+                m = patt.match(val)
+                if m:
+                    existing.append(int(m.group(1)))
+        else:
+            # Backward-compatible path for callers that still use date-based prefix.
+            for (val,) in rows:
+                if val and val.startswith(prefix):
+                    tail = val[len(prefix) :]
+                    if tail.isdigit():
+                        existing.append(int(tail))
     except Exception:
         existing = []
     nxt = (max(existing) + 1) if existing else 1
