@@ -50,7 +50,9 @@ def test_prepare_copy_values_uses_configured_copy_clear_fields(tmp_path, monkeyp
     assert copied["TERMINATION_REASON"] == "Should stay because not configured"
 
 
-def test_get_copy_clear_fields_falls_back_to_default_when_missing_config(tmp_path, monkeypatch):
+def test_get_copy_clear_fields_falls_back_to_default_when_missing_config(
+    tmp_path, monkeypatch
+):
     fg_path = tmp_path / "field_groups.json"
     fg_path.write_text(json.dumps({"headers": []}), encoding="utf-8")
     monkeypatch.setattr(app_module, "FG_PATH", str(fg_path))
@@ -89,7 +91,9 @@ def test_active_lookup_value_filters_cascade_values():
 def test_map_lookups_hide_and_unhide_option(tmp_path, monkeypatch):
     lookup_path = tmp_path / "field_lookups.json"
     mapping_path = tmp_path / "lookup_mappings.json"
-    lookup_path.write_text(json.dumps({"STATUS": ["Draft", "Active"]}), encoding="utf-8")
+    lookup_path.write_text(
+        json.dumps({"STATUS": ["Draft", "Active"]}), encoding="utf-8"
+    )
     mapping_path.write_text("{}", encoding="utf-8")
 
     monkeypatch.setattr(app_module, "LOOKUP_PATH", str(lookup_path))
@@ -103,7 +107,11 @@ def test_map_lookups_hide_and_unhide_option(tmp_path, monkeypatch):
     with app_module.app.test_request_context(
         "/map-lookups",
         method="POST",
-        data={"_action": "lookup_hide", "lookup_key": "STATUS", "lookup_value": "Active"},
+        data={
+            "_action": "lookup_hide",
+            "lookup_key": "STATUS",
+            "lookup_value": "Active",
+        },
     ):
         response = app_module.map_lookups.__wrapped__()
     assert response.status_code == 302
@@ -122,7 +130,9 @@ def test_map_lookups_hide_and_unhide_option(tmp_path, monkeypatch):
         response = app_module.map_lookups.__wrapped__()
     assert response.status_code == 302
     unhidden_cfg = json.loads(lookup_path.read_text(encoding="utf-8"))
-    assert "_inactive" not in unhidden_cfg or "STATUS" not in unhidden_cfg.get("_inactive", {})
+    assert "_inactive" not in unhidden_cfg or "STATUS" not in unhidden_cfg.get(
+        "_inactive", {}
+    )
 
 
 def test_map_lookups_add_cascade_child_option(tmp_path, monkeypatch):

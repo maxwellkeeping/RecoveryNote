@@ -149,17 +149,14 @@ def db_cursor():
 def init_db():
     """Create the submissions and users tables if they do not yet exist."""
     with db_cursor() as cur:
-        cur.execute(
-            """
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS submissions (
                 id          SERIAL PRIMARY KEY,
                 data        JSONB  NOT NULL,
                 created_at  DATE   NOT NULL DEFAULT CURRENT_DATE
             )
-        """
-        )
-        cur.execute(
-            """
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id                    SERIAL PRIMARY KEY,
                 username              VARCHAR(100) UNIQUE NOT NULL,
@@ -167,11 +164,9 @@ def init_db():
                 role                  VARCHAR(20)  NOT NULL DEFAULT 'user',
                 must_change_password  BOOLEAN NOT NULL DEFAULT TRUE
             )
-        """
-        )
+        """)
         # Migrate: add must_change_password column if missing (existing DBs)
-        cur.execute(
-            """
+        cur.execute("""
             DO $$
             BEGIN
                 IF NOT EXISTS (
@@ -181,11 +176,9 @@ def init_db():
                     ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT TRUE;
                 END IF;
             END $$;
-        """
-        )
+        """)
         # Flat view for Power BI / reporting (CREATE OR REPLACE so it upgrades on restart)
-        cur.execute(
-            """
+        cur.execute("""
             CREATE OR REPLACE VIEW submissions_flat AS
             SELECT
                 s.id,
@@ -217,8 +210,7 @@ def init_db():
                 s.data->>'SERVICE_OWNER_CONTACT_NAME'      AS service_owner_contact_name,
                 s.data->>'COMMENTS'                        AS comments
             FROM submissions s;
-        """
-        )
+        """)
 
         # Seed default accounts if users table is empty
         cur.execute("SELECT COUNT(*) FROM users")
@@ -406,7 +398,9 @@ def _active_lookup_value(lookup_key, lookup_val, inactive_map):
             if isinstance(children, list):
                 child_key = _norm_label(f"{lookup_key}::{parent}")
                 child_inactive = set(inactive_map.get(child_key, []))
-                out[parent] = [c for c in children if _norm_label(c) not in child_inactive]
+                out[parent] = [
+                    c for c in children if _norm_label(c) not in child_inactive
+                ]
             else:
                 out[parent] = children
         return out
@@ -444,14 +438,18 @@ def _add_lookup_option(lookups, lookup_key, value, cascade_parent=""):
     return True, "Option added."
 
 
-def _toggle_lookup_option(inactive_map, lookup_key, value, cascade_parent="", hide=True):
+def _toggle_lookup_option(
+    inactive_map, lookup_key, value, cascade_parent="", hide=True
+):
     lookup_key = _norm_label(lookup_key)
     value = _norm_label(value)
     cascade_parent = _norm_label(cascade_parent)
     if not lookup_key or not value:
         return False, "Lookup key and value are required."
 
-    state_key = _norm_label(f"{lookup_key}::{cascade_parent}") if cascade_parent else lookup_key
+    state_key = (
+        _norm_label(f"{lookup_key}::{cascade_parent}") if cascade_parent else lookup_key
+    )
     state = set(inactive_map.get(state_key, []))
     if hide:
         state.add(value)
@@ -754,7 +752,9 @@ def map_lookups():
         cascade_parent = request.form.get("cascade_parent", "")
 
         if action == "lookup_add":
-            ok, msg = _add_lookup_option(lookups, lookup_key, lookup_value, cascade_parent)
+            ok, msg = _add_lookup_option(
+                lookups, lookup_key, lookup_value, cascade_parent
+            )
             if ok:
                 _toggle_lookup_option(
                     inactive_map,
