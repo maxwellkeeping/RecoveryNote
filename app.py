@@ -9,6 +9,7 @@ from flask import (
     make_response,
     send_file,
     abort,
+    session,
 )
 import csv
 import io
@@ -16,6 +17,7 @@ import json
 import os
 import pathlib
 import re
+import secrets
 import sys
 import hashlib
 from contextlib import contextmanager
@@ -124,6 +126,20 @@ def hash_password(password):
     return generate_password_hash(password)
 
 
+def _generate_reset_token():
+    """Generate a one-time password reset token."""
+    return secrets.token_urlsafe(32)
+
+
+def _mask_reset_url(url):
+    """Return a masked reset URL preview for display in the admin UI."""
+    if not url:
+        return ""
+    if len(url) <= 48:
+        return url[:16] + "..."
+    return f"{url[:36]}...{url[-12:]}"
+
+
 def _is_legacy_sha256_hash(stored_hash):
     return bool(re.fullmatch(r"[0-9a-f]{64}", (stored_hash or "")))
 
@@ -201,6 +217,16 @@ def init_db():
                 password              VARCHAR(256) NOT NULL,
                 role                  VARCHAR(20)  NOT NULL DEFAULT 'user',
                 must_change_password  BOOLEAN NOT NULL DEFAULT TRUE
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id          SERIAL PRIMARY KEY,
+                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token       VARCHAR(128) UNIQUE NOT NULL,
+                expires_at  TIMESTAMPTZ NOT NULL,
+                used_at     TIMESTAMPTZ,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
         # Migrate: add must_change_password column if missing (existing DBs)
@@ -956,6 +982,54 @@ def change_password():
     return render_template("change_password.html")
 
 
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    if not token:
+        flash("Invalid password reset link.", "danger")
+        return redirect(url_for("login"))
+    try:
+        with db_cursor() as cur:
+            cur.execute(
+                """
+                SELECT prt.id, prt.user_id
+                FROM password_reset_tokens prt
+                WHERE prt.token = %s
+                  AND prt.used_at IS NULL
+                  AND prt.expires_at > NOW()
+                """,
+                (token,),
+            )
+            token_row = cur.fetchone()
+            if not token_row:
+                flash("This password reset link is invalid or expired.", "danger")
+                return redirect(url_for("login"))
+
+            if request.method == "POST":
+                new_pw = request.form.get("new_password", "").strip()
+                confirm_pw = request.form.get("confirm_password", "").strip()
+                if not new_pw or len(new_pw) < 6:
+                    flash("Password must be at least 6 characters.", "danger")
+                    return render_template("reset_password.html")
+                if new_pw != confirm_pw:
+                    flash("Passwords do not match.", "danger")
+                    return render_template("reset_password.html")
+
+                cur.execute(
+                    "UPDATE users SET password = %s, must_change_password = FALSE WHERE id = %s",
+                    (hash_password(new_pw), token_row[1]),
+                )
+                cur.execute(
+                    "UPDATE password_reset_tokens SET used_at = NOW() WHERE id = %s",
+                    (token_row[0],),
+                )
+                flash("Password reset successfully. You can now sign in.", "success")
+                return redirect(url_for("login"))
+    except Exception:
+        flash("Could not reset password right now.", "danger")
+        return redirect(url_for("login"))
+    return render_template("reset_password.html")
+
+
 @app.route("/logout")
 @login_required
 def logout():
@@ -1267,7 +1341,8 @@ def admin_users():
     with db_cursor() as cur:
         cur.execute("SELECT id, username, role FROM users ORDER BY username")
         users = cur.fetchall()
-    return render_template("admin_users.html", users=users)
+    reset_link = session.pop("admin_reset_link", None)
+    return render_template("admin_users.html", users=users, reset_link=reset_link)
 
 
 @app.route("/admin/users/add", methods=["POST"])
@@ -1305,6 +1380,49 @@ def admin_users_delete(user_id):
         flash("User deleted.", "success")
     except Exception:
         flash("Could not delete user.", "danger")
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/users/reset/<int:user_id>", methods=["POST"])
+@admin_required
+def admin_users_reset(user_id):
+    if user_id == current_user.id:
+        flash("You cannot reset your own password from this page.", "danger")
+        return redirect(url_for("admin_users"))
+    token = _generate_reset_token()
+    try:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT username FROM users WHERE id = %s",
+                (user_id,),
+            )
+            user_row = cur.fetchone()
+            if not user_row:
+                flash("User not found.", "danger")
+                return redirect(url_for("admin_users"))
+            cur.execute(
+                "UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = %s AND used_at IS NULL",
+                (user_id,),
+            )
+            cur.execute(
+                """
+                INSERT INTO password_reset_tokens (user_id, token, expires_at)
+                VALUES (%s, %s, NOW() + INTERVAL '1 hour')
+                """,
+                (user_id, token),
+            )
+        reset_url = url_for("reset_password", token=token, _external=True)
+        session["admin_reset_link"] = {
+            "username": user_row[0],
+            "url": reset_url,
+            "masked_url": _mask_reset_url(reset_url),
+        }
+        flash(
+            f'Password reset link created for "{user_row[0]}".',
+            "info",
+        )
+    except Exception:
+        flash("Could not create password reset link.", "danger")
     return redirect(url_for("admin_users"))
 
 
