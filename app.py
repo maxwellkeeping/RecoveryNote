@@ -167,6 +167,19 @@ def _sso_enabled():
     )
 
 
+def _sso_diagnostics():
+    values = {
+        "oauth_import_available": OAuth is not None,
+        "has_entra_client_id": bool(os.environ.get("ENTRA_CLIENT_ID", "").strip()),
+        "has_entra_client_secret": bool(
+            os.environ.get("ENTRA_CLIENT_SECRET", "").strip()
+        ),
+        "has_entra_tenant_id": bool(os.environ.get("ENTRA_TENANT_ID", "").strip()),
+    }
+    values["sso_enabled"] = all(values.values())
+    return values
+
+
 def _entra_allowed_group_ids():
     raw = os.environ.get("ENTRA_ALLOWED_GROUP_IDS", "")
     return {part.strip() for part in raw.split(",") if part.strip()}
@@ -1162,6 +1175,12 @@ def auth_login():
         print(f"ERROR: Could not start Microsoft sign-in flow: {e}", file=sys.stderr)
         flash("Microsoft sign-in is temporarily unavailable.", "danger")
         return redirect(url_for("login"))
+
+
+@app.route("/auth/diagnostics", methods=["GET"])
+def auth_diagnostics():
+    # Temporary endpoint for staging validation. Returns booleans only.
+    return jsonify(_sso_diagnostics())
 
 
 @app.route("/auth/callback", methods=["GET"])
