@@ -40,12 +40,10 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import safe_join, secure_filename
 from tools import generate_docx
 
-_oauth_import_error = ""
 try:
     OAuth = importlib.import_module("authlib.integrations.flask_client").OAuth
-except Exception as e:
+except Exception:
     OAuth = None
-    _oauth_import_error = str(e)
 
 # --- Load .env if present ---
 try:
@@ -167,28 +165,6 @@ def _sso_enabled():
         and os.environ.get("ENTRA_CLIENT_SECRET")
         and os.environ.get("ENTRA_TENANT_ID")
     )
-
-
-def _sso_diagnostics():
-    prereqs = {
-        "oauth_import_available": OAuth is not None,
-        "oauth_import_error": _oauth_import_error,
-        "has_entra_client_id": bool(os.environ.get("ENTRA_CLIENT_ID", "").strip()),
-        "has_entra_client_secret": bool(
-            os.environ.get("ENTRA_CLIENT_SECRET", "").strip()
-        ),
-        "has_entra_tenant_id": bool(os.environ.get("ENTRA_TENANT_ID", "").strip()),
-    }
-    values = dict(prereqs)
-    values["sso_enabled"] = all(
-        [
-            prereqs["oauth_import_available"],
-            prereqs["has_entra_client_id"],
-            prereqs["has_entra_client_secret"],
-            prereqs["has_entra_tenant_id"],
-        ]
-    )
-    return values
 
 
 def _entra_allowed_group_ids():
@@ -1186,12 +1162,6 @@ def auth_login():
         print(f"ERROR: Could not start Microsoft sign-in flow: {e}", file=sys.stderr)
         flash("Microsoft sign-in is temporarily unavailable.", "danger")
         return redirect(url_for("login"))
-
-
-@app.route("/auth/diagnostics", methods=["GET"])
-def auth_diagnostics():
-    # Temporary endpoint for staging validation. Returns booleans only.
-    return jsonify(_sso_diagnostics())
 
 
 @app.route("/auth/callback", methods=["GET"])
