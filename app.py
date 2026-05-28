@@ -170,7 +170,7 @@ def _sso_enabled():
 
 
 def _sso_diagnostics():
-    values = {
+    prereqs = {
         "oauth_import_available": OAuth is not None,
         "oauth_import_error": _oauth_import_error,
         "has_entra_client_id": bool(os.environ.get("ENTRA_CLIENT_ID", "").strip()),
@@ -179,7 +179,15 @@ def _sso_diagnostics():
         ),
         "has_entra_tenant_id": bool(os.environ.get("ENTRA_TENANT_ID", "").strip()),
     }
-    values["sso_enabled"] = all(values.values())
+    values = dict(prereqs)
+    values["sso_enabled"] = all(
+        [
+            prereqs["oauth_import_available"],
+            prereqs["has_entra_client_id"],
+            prereqs["has_entra_client_secret"],
+            prereqs["has_entra_tenant_id"],
+        ]
+    )
     return values
 
 
