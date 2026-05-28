@@ -1182,7 +1182,16 @@ def auth_callback():
 
     try:
         token = client.authorize_access_token()
-        id_claims = client.parse_id_token(token) or {}
+        id_claims = {}
+        try:
+            id_claims = client.parse_id_token(token) or {}
+        except Exception as parse_err:
+            # Some providers/flows may not return a parseable id_token on every path.
+            # Continue with userinfo claims if available.
+            print(
+                f"WARNING: Could not parse ID token claims: {parse_err}",
+                file=sys.stderr,
+            )
         userinfo_claims = token.get("userinfo") or {}
         # Entra group membership is commonly emitted in ID token claims.
         # Merge userinfo for profile fields, but preserve ID-token group claims.
@@ -1190,6 +1199,8 @@ def auth_callback():
         claims.update(userinfo_claims)
         if "groups" in id_claims:
             claims["groups"] = id_claims.get("groups")
+        if not claims:
+            raise PermissionError("Microsoft sign-in returned no usable identity claims.")
         user = _get_or_create_entra_user(claims or {})
     except PermissionError as e:
         flash(str(e), "danger")
