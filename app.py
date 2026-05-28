@@ -29,6 +29,7 @@ from urllib.parse import urljoin, urlparse
 
 import psycopg2
 import psycopg2.extras
+import requests
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -205,12 +206,53 @@ def _claims_from_jwt_unverified(token_value):
         return {}
 
 
-def _is_user_in_allowed_groups(claims):
+def _claims_indicate_group_overage(claims):
+    if not isinstance(claims, dict):
+        return False
+    if claims.get("hasgroups"):
+        return True
+    claim_names = claims.get("_claim_names")
+    return isinstance(claim_names, dict) and "groups" in claim_names
+
+
+def _fetch_user_group_ids_from_graph(access_token):
+    if not access_token:
+        return set()
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+    url = "https://graph.microsoft.com/v1.0/me/transitiveMemberOf/microsoft.graph.group?$select=id"
+    groups = set()
+
+    try:
+        while url:
+            resp = requests.get(url, headers=headers, timeout=8)
+            resp.raise_for_status()
+            payload = resp.json() if resp.content else {}
+            for item in payload.get("value", []):
+                gid = str(item.get("id") or "").strip().lower()
+                if gid:
+                    groups.add(gid)
+            url = payload.get("@odata.nextLink")
+    except Exception as e:
+        print(f"WARNING: Could not resolve Entra groups from Graph: {e}", file=sys.stderr)
+        return set()
+
+    return groups
+
+
+def _is_user_in_allowed_groups(claims, access_token=""):
     allowed = _entra_allowed_group_ids()
     if not allowed:
         return True
     user_groups = set(_claim_groups(claims))
-    return bool(allowed.intersection(user_groups))
+    if allowed.intersection(user_groups):
+        return True
+
+    if _claims_indicate_group_overage(claims):
+        graph_groups = _fetch_user_group_ids_from_graph(access_token)
+        return bool(allowed.intersection(graph_groups))
+
+    return False
 
 
 def _entra_redirect_uri():
@@ -284,12 +326,12 @@ def _ensure_unique_username(base_username):
         suffix += 1
 
 
-def _get_or_create_entra_user(claims):
+def _get_or_create_entra_user(claims, access_token=""):
     subject = _resolve_entra_subject(claims)
     if not subject:
         raise PermissionError("Microsoft sign-in response is missing a user identifier.")
 
-    if not _is_user_in_allowed_groups(claims):
+    if not _is_user_in_allowed_groups(claims, access_token):
         raise PermissionError("Your account is not in an allowed access group.")
 
     username = _resolve_entra_username(claims)
@@ -1240,7 +1282,7 @@ def auth_callback():
                 claims["groups"] = at_claims.get("groups")
         if not claims:
             raise PermissionError("Microsoft sign-in returned no usable identity claims.")
-        user = _get_or_create_entra_user(claims or {})
+        user = _get_or_create_entra_user(claims or {}, token.get("access_token", ""))
     except PermissionError as e:
         flash(str(e), "danger")
         return redirect(url_for("login"))

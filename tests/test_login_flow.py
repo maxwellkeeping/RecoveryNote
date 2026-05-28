@@ -77,3 +77,25 @@ def test_allowed_groups_deny(monkeypatch):
     monkeypatch.setenv("ENTRA_ALLOWED_GROUP_IDS", "group-a, group-b")
     claims = {"groups": ["group-x", "group-y"]}
     assert not app_module._is_user_in_allowed_groups(claims)
+
+
+def test_allowed_groups_match_via_graph_on_overage(monkeypatch):
+    monkeypatch.setenv("ENTRA_ALLOWED_GROUP_IDS", "group-a, group-b")
+    monkeypatch.setattr(
+        app_module,
+        "_fetch_user_group_ids_from_graph",
+        lambda token: {"group-b"},
+    )
+    claims = {"_claim_names": {"groups": "src1"}}
+    assert app_module._is_user_in_allowed_groups(claims, "fake-token")
+
+
+def test_allowed_groups_overage_without_match_denied(monkeypatch):
+    monkeypatch.setenv("ENTRA_ALLOWED_GROUP_IDS", "group-a, group-b")
+    monkeypatch.setattr(
+        app_module,
+        "_fetch_user_group_ids_from_graph",
+        lambda token: {"group-x"},
+    )
+    claims = {"hasgroups": True}
+    assert not app_module._is_user_in_allowed_groups(claims, "fake-token")
