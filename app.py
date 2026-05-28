@@ -15,6 +15,7 @@ import csv
 import io
 import importlib
 import json
+import base64
 import os
 import pathlib
 import re
@@ -169,16 +170,35 @@ def _sso_enabled():
 
 def _entra_allowed_group_ids():
     raw = os.environ.get("ENTRA_ALLOWED_GROUP_IDS", "")
-    return {part.strip() for part in raw.split(",") if part.strip()}
+    return {part.strip().lower() for part in raw.split(",") if part.strip()}
 
 
 def _claim_groups(claims):
     groups = claims.get("groups", []) if isinstance(claims, dict) else []
     if isinstance(groups, str):
-        return [groups]
+        return [groups.strip().lower()]
     if isinstance(groups, list):
-        return [str(g) for g in groups if g]
+        return [str(g).strip().lower() for g in groups if g]
     return []
+
+
+def _claims_from_jwt_unverified(token_value):
+    """Parse JWT claims without signature verification for non-security hints.
+
+    This is only used to read optional group claims that Azure may emit in
+    access_token instead of id_token; authorization still requires exact group
+    ID matching.
+    """
+    if not token_value or token_value.count(".") < 2:
+        return {}
+    try:
+        payload = token_value.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        decoded = base64.urlsafe_b64decode(payload.encode("utf-8"))
+        data = json.loads(decoded.decode("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 def _is_user_in_allowed_groups(claims):
@@ -1199,6 +1219,11 @@ def auth_callback():
         claims.update(userinfo_claims)
         if "groups" in id_claims:
             claims["groups"] = id_claims.get("groups")
+        # In some Entra flows, groups may be emitted in access_token claims.
+        if "groups" not in claims:
+            at_claims = _claims_from_jwt_unverified(token.get("access_token", ""))
+            if "groups" in at_claims:
+                claims["groups"] = at_claims.get("groups")
         if not claims:
             raise PermissionError("Microsoft sign-in returned no usable identity claims.")
         user = _get_or_create_entra_user(claims or {})
