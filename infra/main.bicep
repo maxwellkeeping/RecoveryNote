@@ -48,6 +48,22 @@ param wikiAuthSecret string = ''
 @secure()
 param wikiAnthropicApiKey string = ''
 
+@description('Microsoft Entra application (client) ID used by RecoveryNote SSO.')
+param entraClientId string = ''
+
+@description('Microsoft Entra application client secret used by RecoveryNote SSO.')
+@secure()
+param entraClientSecret string = ''
+
+@description('Microsoft Entra tenant ID used by RecoveryNote SSO.')
+param entraTenantId string = ''
+
+@description('Comma-separated list of Entra group object IDs allowed to sign in. Leave empty to allow all tenant users.')
+param entraAllowedGroupIds string = ''
+
+@description('Optional callback URL override for Entra sign-in. Leave empty to default to https://<webapp>/auth/callback.')
+param entraRedirectUri string = ''
+
 // ── Derived names ──────────────────────────────────────────────────────────────
 var suffix         = take(uniqueString(resourceGroup().id), 8)
 var planName       = '${appName}-plan'
@@ -57,6 +73,9 @@ var kvName         = '${take(appName, 10)}-kv-${take(suffix, 6)}'
 var pgServerName   = '${take(toLower(appName), 15)}-pg-${suffix}'
 var dbName         = 'recoverynote'
 var wikiDbName     = 'clientllmwiki'
+var loginEndpoint = environment().authentication.loginEndpoint
+var resolvedEntraAuthority = empty(entraTenantId) ? '' : '${loginEndpoint}${entraTenantId}/v2.0'
+var resolvedEntraRedirectUri = !empty(entraRedirectUri) ? entraRedirectUri : 'https://${webApp.properties.defaultHostName}/auth/callback'
 
 // ── App Service Plan (Linux, B1 Basic — supports both apps with always-on) ───
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
@@ -147,7 +166,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
       deployWiki ? [
         {
           tenantId: subscription().tenantId
-          objectId: wikiApp.identity!.principalId
+          objectId: wikiApp.?identity.?principalId ?? ''
           permissions: { secrets: [ 'get', 'list' ] }
         }
       ] : []
@@ -220,7 +239,6 @@ resource kvSecretDbUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   properties: {
     value: 'postgresql://${postgresAdminUser}:${postgresAdminPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/${dbName}?sslmode=require'
   }
-  dependsOn: [keyVault]
 }
 
 resource kvSecretAppKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
@@ -229,7 +247,6 @@ resource kvSecretAppKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   properties: {
     value: secretKey
   }
-  dependsOn: [keyVault]
 }
 
 resource kvSecretWikiDbUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (deployWiki) {
@@ -238,7 +255,6 @@ resource kvSecretWikiDbUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (
   properties: {
     value: 'postgresql://${postgresAdminUser}:${postgresAdminPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/${wikiDbName}?sslmode=require'
   }
-  dependsOn: [keyVault]
 }
 
 resource kvSecretWikiAuthSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (deployWiki && !empty(wikiAuthSecret)) {
@@ -247,7 +263,6 @@ resource kvSecretWikiAuthSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' =
   properties: {
     value: wikiAuthSecret
   }
-  dependsOn: [keyVault]
 }
 
 resource kvSecretWikiAnthropicKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (deployWiki && !empty(wikiAnthropicApiKey)) {
@@ -256,7 +271,30 @@ resource kvSecretWikiAnthropicKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01'
   properties: {
     value: wikiAnthropicApiKey
   }
-  dependsOn: [keyVault]
+}
+
+resource kvSecretEntraClientId 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(entraClientId)) {
+  parent: keyVault
+  name: 'entra-client-id'
+  properties: {
+    value: entraClientId
+  }
+}
+
+resource kvSecretEntraClientSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(entraClientSecret)) {
+  parent: keyVault
+  name: 'entra-client-secret'
+  properties: {
+    value: entraClientSecret
+  }
+}
+
+resource kvSecretEntraTenantId 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(entraTenantId)) {
+  parent: keyVault
+  name: 'entra-tenant-id'
+  properties: {
+    value: entraTenantId
+  }
 }
 
 // ── App Settings ───────────────────────────────────────────────────────────────
@@ -270,11 +308,20 @@ resource webAppSettings 'Microsoft.Web/sites/config@2023-12-01' = {
     SCM_DO_BUILD_DURING_DEPLOYMENT: 'true'
     DATABASE_URL: '@Microsoft.KeyVault(VaultName=${kvName};SecretName=database-url)'
     SECRET_KEY: '@Microsoft.KeyVault(VaultName=${kvName};SecretName=secret-key)'
+    ENTRA_CLIENT_ID: !empty(entraClientId) ? '@Microsoft.KeyVault(VaultName=${kvName};SecretName=entra-client-id)' : ''
+    ENTRA_CLIENT_SECRET: !empty(entraClientSecret) ? '@Microsoft.KeyVault(VaultName=${kvName};SecretName=entra-client-secret)' : ''
+    ENTRA_TENANT_ID: !empty(entraTenantId) ? '@Microsoft.KeyVault(VaultName=${kvName};SecretName=entra-tenant-id)' : ''
+    ENTRA_AUTHORITY: resolvedEntraAuthority
+    ENTRA_ALLOWED_GROUP_IDS: entraAllowedGroupIds
+    ENTRA_REDIRECT_URI: resolvedEntraRedirectUri
   }
   dependsOn: [
     keyVault
     kvSecretDbUrl
     kvSecretAppKey
+    kvSecretEntraClientId
+    kvSecretEntraClientSecret
+    kvSecretEntraTenantId
   ]
 }
 
@@ -299,7 +346,7 @@ resource wikiAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (deployWik
 // ── Outputs ────────────────────────────────────────────────────────────────────
 output webAppUrl string = 'https://${webApp.properties.defaultHostName}'
 output webAppName string = webApp.name
-output wikiAppUrl string = deployWiki ? 'https://${wikiApp.properties!.defaultHostName}' : ''
+output wikiAppUrl string = deployWiki ? 'https://${wikiApp.?properties.?defaultHostName ?? ''}' : ''
 output wikiAppName string = deployWiki ? wikiApp.name! : ''
 output keyVaultName string = keyVault.name
 output postgresServerFqdn string = postgresServer.properties.fullyQualifiedDomainName

@@ -8,7 +8,14 @@
           <div class="section-card">
             <div class="card-header">Sign In</div>
             <div class="card-body p-4">
+              {% if sso_enabled %}
+              <a class="btn btn-primary w-100 mb-3" href="{{ url_for('auth_login', next=request.args.get('next')) }}">
+                Sign in with Microsoft
+              </a>
+              <div class="text-muted small mb-3 text-center">or use local account</div>
+              {% endif %}
               <form method="post" action="{{ url_for('login') }}">
+                <input type="hidden" name="next" value="{{ request.args.get('next', '') }}">
                 <div class="mb-3">
                   <label class="form-label" for="username">Username</label>
                   <input type="text" name="username" id="username" class="form-control"

@@ -2,6 +2,7 @@ from flask import (
     Flask,
     render_template,
     request,
+    session,
     redirect,
     url_for,
     flash,
@@ -9,10 +10,10 @@ from flask import (
     make_response,
     send_file,
     abort,
-    session,
 )
 import csv
 import io
+import importlib
 import json
 import os
 import pathlib
@@ -38,6 +39,11 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import safe_join, secure_filename
 from tools import generate_docx
+
+try:
+    OAuth = importlib.import_module("authlib.integrations.flask_client").OAuth
+except Exception:
+    OAuth = None
 
 # --- Load .env if present ---
 try:
@@ -77,6 +83,8 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
 login_manager.login_message_category = "warning"
+
+_oauth_client = None
 
 
 class User(UserMixin):
@@ -126,20 +134,6 @@ def hash_password(password):
     return generate_password_hash(password)
 
 
-def _generate_reset_token():
-    """Generate a one-time password reset token."""
-    return secrets.token_urlsafe(32)
-
-
-def _mask_reset_url(url):
-    """Return a masked reset URL preview for display in the admin UI."""
-    if not url:
-        return ""
-    if len(url) <= 48:
-        return url[:16] + "..."
-    return f"{url[:36]}...{url[-12:]}"
-
-
 def _is_legacy_sha256_hash(stored_hash):
     return bool(re.fullmatch(r"[0-9a-f]{64}", (stored_hash or "")))
 
@@ -162,6 +156,191 @@ def _is_safe_redirect_target(target):
     ref_url = urlparse(request.host_url)
     test_url = urlparse(urljoin(request.host_url, target))
     return test_url.scheme in ("http", "https") and ref_url.netloc == test_url.netloc
+
+
+def _sso_enabled():
+    return bool(
+        OAuth is not None
+        and os.environ.get("ENTRA_CLIENT_ID")
+        and os.environ.get("ENTRA_CLIENT_SECRET")
+        and os.environ.get("ENTRA_TENANT_ID")
+    )
+
+
+def _entra_allowed_group_ids():
+    raw = os.environ.get("ENTRA_ALLOWED_GROUP_IDS", "")
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _claim_groups(claims):
+    groups = claims.get("groups", []) if isinstance(claims, dict) else []
+    if isinstance(groups, str):
+        return [groups]
+    if isinstance(groups, list):
+        return [str(g) for g in groups if g]
+    return []
+
+
+def _is_user_in_allowed_groups(claims):
+    allowed = _entra_allowed_group_ids()
+    if not allowed:
+        return True
+    user_groups = set(_claim_groups(claims))
+    return bool(allowed.intersection(user_groups))
+
+
+def _entra_redirect_uri():
+    configured = os.environ.get("ENTRA_REDIRECT_URI", "").strip()
+    if configured:
+        return configured
+    return url_for("auth_callback", _external=True)
+
+
+def _get_entra_client():
+    global _oauth_client
+    if not _sso_enabled():
+        return None
+    if _oauth_client is not None:
+        return _oauth_client
+
+    tenant_id = os.environ.get("ENTRA_TENANT_ID", "").strip()
+    authority = os.environ.get(
+        "ENTRA_AUTHORITY",
+        f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+    ).rstrip("/")
+
+    oauth = OAuth(app)
+    oauth.register(
+        name="entra",
+        client_id=os.environ.get("ENTRA_CLIENT_ID"),
+        client_secret=os.environ.get("ENTRA_CLIENT_SECRET"),
+        server_metadata_url=f"{authority}/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid profile email"},
+    )
+    _oauth_client = oauth.create_client("entra")
+    return _oauth_client
+
+
+def _resolve_entra_subject(claims):
+    if not isinstance(claims, dict):
+        return ""
+    return str(claims.get("oid") or claims.get("sub") or "").strip()
+
+
+def _resolve_entra_username(claims):
+    if not isinstance(claims, dict):
+        return ""
+    value = (
+        claims.get("preferred_username")
+        or claims.get("email")
+        or claims.get("upn")
+        or ""
+    )
+    return str(value).strip().lower()
+
+
+def _resolve_entra_display_name(claims):
+    if not isinstance(claims, dict):
+        return ""
+    return str(claims.get("name") or "").strip()
+
+
+def _ensure_unique_username(base_username):
+    candidate = base_username
+    suffix = 1
+    while True:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM users WHERE lower(username) = lower(%s)",
+                (candidate,),
+            )
+            if cur.fetchone() is None:
+                return candidate
+        candidate = f"{base_username}-{suffix}"
+        suffix += 1
+
+
+def _get_or_create_entra_user(claims):
+    subject = _resolve_entra_subject(claims)
+    if not subject:
+        raise PermissionError("Microsoft sign-in response is missing a user identifier.")
+
+    if not _is_user_in_allowed_groups(claims):
+        raise PermissionError("Your account is not in an allowed access group.")
+
+    username = _resolve_entra_username(claims)
+    display_name = _resolve_entra_display_name(claims)
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.id, u.username, u.role, u.must_change_password
+            FROM oauth_identities oi
+            JOIN users u ON u.id = oi.user_id
+            WHERE oi.provider = %s AND oi.provider_sub = %s
+            """,
+            ("entra", subject),
+        )
+        mapped = cur.fetchone()
+        if mapped:
+            cur.execute(
+                """
+                UPDATE oauth_identities
+                SET email = %s, display_name = %s, last_login = NOW()
+                WHERE provider = %s AND provider_sub = %s
+                """,
+                (username or None, display_name or None, "entra", subject),
+            )
+            return User(mapped[0], mapped[1], mapped[2], bool(mapped[3]))
+
+    if not username:
+        raise PermissionError(
+            "Microsoft sign-in did not include an email/UPN claim for user mapping."
+        )
+
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT id, username, role, must_change_password FROM users WHERE lower(username) = lower(%s)",
+            (username,),
+        )
+        user_row = cur.fetchone()
+
+    if user_row:
+        user_id, user_name, role, must_change = user_row
+    else:
+        unique_username = _ensure_unique_username(username)
+        with db_cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO users (username, password, role, must_change_password)
+                VALUES (%s, %s, %s, FALSE)
+                RETURNING id, username, role, must_change_password
+                """,
+                (
+                    unique_username,
+                    hash_password(secrets.token_urlsafe(24)),
+                    "user",
+                ),
+            )
+            created = cur.fetchone()
+        user_id, user_name, role, must_change = created
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO oauth_identities (user_id, provider, provider_sub, email, display_name)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (provider, provider_sub)
+            DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                email = EXCLUDED.email,
+                display_name = EXCLUDED.display_name,
+                last_login = NOW()
+            """,
+            (user_id, "entra", subject, username or None, display_name or None),
+        )
+
+    return User(user_id, user_name, role, bool(must_change))
 
 
 def _submission_upload_dir(submission_id):
@@ -220,15 +399,21 @@ def init_db():
             )
         """)
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS password_reset_tokens (
-                id          SERIAL PRIMARY KEY,
-                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                token       VARCHAR(128) UNIQUE NOT NULL,
-                expires_at  TIMESTAMPTZ NOT NULL,
-                used_at     TIMESTAMPTZ,
-                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            CREATE TABLE IF NOT EXISTS oauth_identities (
+                id            SERIAL PRIMARY KEY,
+                user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                provider      VARCHAR(40) NOT NULL,
+                provider_sub  VARCHAR(255) NOT NULL,
+                email         VARCHAR(255),
+                display_name  VARCHAR(255),
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_login    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(provider, provider_sub)
             )
         """)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_oauth_identities_user_id ON oauth_identities(user_id)"
+        )
         # Migrate: add must_change_password column if missing (existing DBs)
         cur.execute("""
             DO $$
@@ -316,7 +501,7 @@ def ensure_db():
 def enforce_password_change():
     """Redirect users who must change their password to the change-password page."""
     if current_user.is_authenticated and current_user.must_change_password:
-        allowed = ("change_password", "logout", "static")
+        allowed = ("change_password", "logout", "auth_login", "auth_callback", "static")
         if request.endpoint not in allowed:
             flash("You must change your password before continuing.", "warning")
             return redirect(url_for("change_password"))
@@ -933,7 +1118,7 @@ def login():
                 "Login is temporarily unavailable. Please verify your database connection.",
                 "danger",
             )
-            return render_template("login.html")
+            return render_template("login.html", sso_enabled=_sso_enabled())
         if row and verify_password(row[2], password):
             if _is_legacy_sha256_hash(row[2]):
                 try:
@@ -949,12 +1134,71 @@ def login():
             login_user(user)
             if user.must_change_password:
                 return redirect(url_for("change_password"))
-            next_page = request.args.get("next")
+            next_page = request.form.get("next") or request.args.get("next")
             if next_page and _is_safe_redirect_target(next_page):
                 return redirect(next_page)
             return redirect(url_for("track"))
         flash("Invalid username or password.", "danger")
-    return render_template("login.html")
+    return render_template("login.html", sso_enabled=_sso_enabled())
+
+
+@app.route("/auth/login", methods=["GET"])
+def auth_login():
+    if current_user.is_authenticated:
+        return redirect(url_for("track"))
+
+    client = _get_entra_client()
+    if client is None:
+        flash("Microsoft sign-in is not configured for this environment.", "warning")
+        return redirect(url_for("login"))
+
+    next_page = request.args.get("next")
+    if next_page and _is_safe_redirect_target(next_page):
+        session["post_auth_next"] = next_page
+
+    try:
+        return client.authorize_redirect(_entra_redirect_uri())
+    except Exception as e:
+        print(f"ERROR: Could not start Microsoft sign-in flow: {e}", file=sys.stderr)
+        flash("Microsoft sign-in is temporarily unavailable.", "danger")
+        return redirect(url_for("login"))
+
+
+@app.route("/auth/callback", methods=["GET"])
+def auth_callback():
+    if current_user.is_authenticated:
+        return redirect(url_for("track"))
+
+    error = request.args.get("error")
+    if error:
+        description = request.args.get("error_description", "")
+        flash(f"Microsoft sign-in failed: {error} {description}".strip(), "danger")
+        return redirect(url_for("login"))
+
+    client = _get_entra_client()
+    if client is None:
+        flash("Microsoft sign-in is not configured for this environment.", "warning")
+        return redirect(url_for("login"))
+
+    try:
+        token = client.authorize_access_token()
+        claims = token.get("userinfo")
+        if not claims:
+            claims = client.parse_id_token(token)
+        user = _get_or_create_entra_user(claims or {})
+    except PermissionError as e:
+        flash(str(e), "danger")
+        return redirect(url_for("login"))
+    except Exception as e:
+        print(f"ERROR: Microsoft callback processing failed: {e}", file=sys.stderr)
+        flash("Microsoft sign-in could not be completed.", "danger")
+        return redirect(url_for("login"))
+
+    login_user(user)
+    next_page = session.pop("post_auth_next", None)
+    if next_page and _is_safe_redirect_target(next_page):
+        return redirect(next_page)
+    return redirect(url_for("track"))
 
 
 @app.route("/change-password", methods=["GET", "POST"])
@@ -982,57 +1226,10 @@ def change_password():
     return render_template("change_password.html")
 
 
-@app.route("/reset-password/<token>", methods=["GET", "POST"])
-def reset_password(token):
-    if not token:
-        flash("Invalid password reset link.", "danger")
-        return redirect(url_for("login"))
-    try:
-        with db_cursor() as cur:
-            cur.execute(
-                """
-                SELECT prt.id, prt.user_id
-                FROM password_reset_tokens prt
-                WHERE prt.token = %s
-                  AND prt.used_at IS NULL
-                  AND prt.expires_at > NOW()
-                """,
-                (token,),
-            )
-            token_row = cur.fetchone()
-            if not token_row:
-                flash("This password reset link is invalid or expired.", "danger")
-                return redirect(url_for("login"))
-
-            if request.method == "POST":
-                new_pw = request.form.get("new_password", "").strip()
-                confirm_pw = request.form.get("confirm_password", "").strip()
-                if not new_pw or len(new_pw) < 6:
-                    flash("Password must be at least 6 characters.", "danger")
-                    return render_template("reset_password.html")
-                if new_pw != confirm_pw:
-                    flash("Passwords do not match.", "danger")
-                    return render_template("reset_password.html")
-
-                cur.execute(
-                    "UPDATE users SET password = %s, must_change_password = FALSE WHERE id = %s",
-                    (hash_password(new_pw), token_row[1]),
-                )
-                cur.execute(
-                    "UPDATE password_reset_tokens SET used_at = NOW() WHERE id = %s",
-                    (token_row[0],),
-                )
-                flash("Password reset successfully. You can now sign in.", "success")
-                return redirect(url_for("login"))
-    except Exception:
-        flash("Could not reset password right now.", "danger")
-        return redirect(url_for("login"))
-    return render_template("reset_password.html")
-
-
 @app.route("/logout")
 @login_required
 def logout():
+    session.pop("post_auth_next", None)
     logout_user()
     flash("Logged out.", "info")
     return redirect(url_for("login"))
@@ -1341,8 +1538,7 @@ def admin_users():
     with db_cursor() as cur:
         cur.execute("SELECT id, username, role FROM users ORDER BY username")
         users = cur.fetchall()
-    reset_link = session.pop("admin_reset_link", None)
-    return render_template("admin_users.html", users=users, reset_link=reset_link)
+    return render_template("admin_users.html", users=users)
 
 
 @app.route("/admin/users/add", methods=["POST"])
@@ -1380,49 +1576,6 @@ def admin_users_delete(user_id):
         flash("User deleted.", "success")
     except Exception:
         flash("Could not delete user.", "danger")
-    return redirect(url_for("admin_users"))
-
-
-@app.route("/admin/users/reset/<int:user_id>", methods=["POST"])
-@admin_required
-def admin_users_reset(user_id):
-    if user_id == current_user.id:
-        flash("You cannot reset your own password from this page.", "danger")
-        return redirect(url_for("admin_users"))
-    token = _generate_reset_token()
-    try:
-        with db_cursor() as cur:
-            cur.execute(
-                "SELECT username FROM users WHERE id = %s",
-                (user_id,),
-            )
-            user_row = cur.fetchone()
-            if not user_row:
-                flash("User not found.", "danger")
-                return redirect(url_for("admin_users"))
-            cur.execute(
-                "UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = %s AND used_at IS NULL",
-                (user_id,),
-            )
-            cur.execute(
-                """
-                INSERT INTO password_reset_tokens (user_id, token, expires_at)
-                VALUES (%s, %s, NOW() + INTERVAL '1 hour')
-                """,
-                (user_id, token),
-            )
-        reset_url = url_for("reset_password", token=token, _external=True)
-        session["admin_reset_link"] = {
-            "username": user_row[0],
-            "url": reset_url,
-            "masked_url": _mask_reset_url(reset_url),
-        }
-        flash(
-            f'Password reset link created for "{user_row[0]}".',
-            "info",
-        )
-    except Exception:
-        flash("Could not create password reset link.", "danger")
     return redirect(url_for("admin_users"))
 
 

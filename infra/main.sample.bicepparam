@@ -38,3 +38,19 @@ param wikiAuthSecret = '<REPLACE_WITH_AUTH_SECRET>'
 
 // Anthropic API key for AI features
 param wikiAnthropicApiKey = '<REPLACE_WITH_ANTHROPIC_KEY>'
+
+// ── RecoveryNote SSO (Microsoft Entra ID) ───────────────────────────────────
+// Client (application) ID from your app registration.
+param entraClientId = '<REPLACE_WITH_ENTRA_CLIENT_ID>'
+
+// Client secret value from app registration.
+param entraClientSecret = '<REPLACE_WITH_ENTRA_CLIENT_SECRET>'
+
+// Directory (tenant) ID from app registration.
+param entraTenantId = '<REPLACE_WITH_ENTRA_TENANT_ID>'
+
+// Comma-separated object IDs for groups allowed to sign in.
+param entraAllowedGroupIds = '<GROUP_OBJECT_ID_1>,<GROUP_OBJECT_ID_2>'
+
+// Leave empty to use https://<webapp>.azurewebsites.net/auth/callback
+param entraRedirectUri = ''

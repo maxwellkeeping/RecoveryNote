@@ -51,3 +51,29 @@ def test_login_redirects_to_change_password(monkeypatch):
 
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/change-password")
+
+
+def test_auth_login_redirects_to_local_when_sso_not_configured(monkeypatch):
+    monkeypatch.setattr(app_module, "_db_initialized", True)
+    monkeypatch.delenv("ENTRA_CLIENT_ID", raising=False)
+    monkeypatch.delenv("ENTRA_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("ENTRA_TENANT_ID", raising=False)
+
+    client = app_module.app.test_client()
+    response = client.get("/auth/login", follow_redirects=True)
+
+    body = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "Microsoft sign-in is not configured" in body
+
+
+def test_allowed_groups_match(monkeypatch):
+    monkeypatch.setenv("ENTRA_ALLOWED_GROUP_IDS", "group-a, group-b")
+    claims = {"groups": ["group-x", "group-b"]}
+    assert app_module._is_user_in_allowed_groups(claims)
+
+
+def test_allowed_groups_deny(monkeypatch):
+    monkeypatch.setenv("ENTRA_ALLOWED_GROUP_IDS", "group-a, group-b")
+    claims = {"groups": ["group-x", "group-y"]}
+    assert not app_module._is_user_in_allowed_groups(claims)
