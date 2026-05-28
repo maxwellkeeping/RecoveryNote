@@ -89,6 +89,14 @@ login_manager.login_message_category = "warning"
 _oauth_client = None
 
 
+def _entra_scopes():
+    configured = os.environ.get("ENTRA_SCOPES", "").strip()
+    if configured:
+        return configured
+    # User.Read enables fallback Graph membership lookup for group overage claims.
+    return "openid profile email User.Read"
+
+
 class User(UserMixin):
     def __init__(self, id, username, role, must_change_password=False):
         self.id = id
@@ -235,7 +243,7 @@ def _fetch_user_group_ids_from_graph(access_token):
             url = payload.get("@odata.nextLink")
     except Exception as e:
         print(f"WARNING: Could not resolve Entra groups from Graph: {e}", file=sys.stderr)
-        return set()
+        return None
 
     return groups
 
@@ -250,6 +258,11 @@ def _is_user_in_allowed_groups(claims, access_token=""):
 
     if _claims_indicate_group_overage(claims):
         graph_groups = _fetch_user_group_ids_from_graph(access_token)
+        if graph_groups is None:
+            raise PermissionError(
+                "Microsoft sign-in is missing Graph permissions needed to validate group access. "
+                "Ensure User.Read is requested/consented and try again."
+            )
         return bool(allowed.intersection(graph_groups))
 
     return False
@@ -281,7 +294,7 @@ def _get_entra_client():
         client_id=os.environ.get("ENTRA_CLIENT_ID"),
         client_secret=os.environ.get("ENTRA_CLIENT_SECRET"),
         server_metadata_url=f"{authority}/.well-known/openid-configuration",
-        client_kwargs={"scope": "openid profile email"},
+        client_kwargs={"scope": _entra_scopes()},
     )
     _oauth_client = oauth.create_client("entra")
     return _oauth_client

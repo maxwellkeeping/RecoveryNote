@@ -99,3 +99,26 @@ def test_allowed_groups_overage_without_match_denied(monkeypatch):
     )
     claims = {"hasgroups": True}
     assert not app_module._is_user_in_allowed_groups(claims, "fake-token")
+
+
+def test_allowed_groups_overage_graph_failure_raises(monkeypatch):
+    monkeypatch.setenv("ENTRA_ALLOWED_GROUP_IDS", "group-a, group-b")
+    monkeypatch.setattr(
+        app_module,
+        "_fetch_user_group_ids_from_graph",
+        lambda token: None,
+    )
+    claims = {"hasgroups": True}
+    try:
+        app_module._is_user_in_allowed_groups(claims, "fake-token")
+        assert False, "Expected PermissionError"
+    except PermissionError as e:
+        assert "Graph permissions" in str(e)
+
+
+def test_entra_scopes_default_and_override(monkeypatch):
+    monkeypatch.delenv("ENTRA_SCOPES", raising=False)
+    assert app_module._entra_scopes() == "openid profile email User.Read"
+
+    monkeypatch.setenv("ENTRA_SCOPES", "openid profile email User.Read GroupMember.Read.All")
+    assert app_module._entra_scopes() == "openid profile email User.Read GroupMember.Read.All"
