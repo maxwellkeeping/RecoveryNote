@@ -23,7 +23,7 @@ import secrets
 import sys
 import hashlib
 from contextlib import contextmanager
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from functools import wraps
 from urllib.parse import urljoin, urlparse
 
@@ -133,6 +133,10 @@ def admin_required(f):
 def hash_password(password):
     """Return a strong password hash for storage."""
     return generate_password_hash(password)
+
+
+def _generate_reset_token():
+    return secrets.token_urlsafe(32)
 
 
 def _is_legacy_sha256_hash(stored_hash):
@@ -416,6 +420,16 @@ def init_db():
                 password              VARCHAR(256) NOT NULL,
                 role                  VARCHAR(20)  NOT NULL DEFAULT 'user',
                 must_change_password  BOOLEAN NOT NULL DEFAULT TRUE
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id          SERIAL PRIMARY KEY,
+                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token       VARCHAR(255) UNIQUE NOT NULL,
+                expires_at  TIMESTAMPTZ NOT NULL,
+                used_at     TIMESTAMPTZ,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
         cur.execute("""
@@ -1579,7 +1593,96 @@ def admin_users():
     with db_cursor() as cur:
         cur.execute("SELECT id, username, role FROM users ORDER BY username")
         users = cur.fetchall()
-    return render_template("admin_users.html", users=users)
+    return render_template("admin_users.html", users=users, reset_link=None)
+
+
+@app.route("/admin/users/reset/<int:user_id>", methods=["POST"])
+@admin_required
+def admin_users_reset(user_id):
+    if user_id == current_user.id:
+        flash("You cannot reset your own password from this page.", "danger")
+        return redirect(url_for("admin_users"))
+
+    with db_cursor() as cur:
+        cur.execute("SELECT username FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+    if row is None:
+        flash("User not found.", "danger")
+        return redirect(url_for("admin_users"))
+
+    username = row[0]
+    token = _generate_reset_token()
+    expires_at = datetime.now(UTC) + timedelta(hours=1)
+
+    with db_cursor() as cur:
+        cur.execute(
+            "UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = %s AND used_at IS NULL",
+            (user_id,),
+        )
+        cur.execute(
+            "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (%s, %s, %s)",
+            (user_id, token, expires_at),
+        )
+        cur.execute("SELECT id, username, role FROM users ORDER BY username")
+        users = cur.fetchall()
+
+    reset_url = url_for("reset_password", token=token, _external=True)
+    flash(f'Password reset link created for "{username}".', "success")
+    return render_template(
+        "admin_users.html",
+        users=users,
+        reset_link={
+            "username": username,
+            "url": reset_url,
+            "masked_url": reset_url,
+        },
+    )
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT prt.id, prt.user_id FROM password_reset_tokens prt
+            WHERE prt.token = %s
+              AND prt.used_at IS NULL
+              AND prt.expires_at > NOW()
+            """,
+            (token,),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        flash("Reset link is invalid or expired.", "danger")
+        return redirect(url_for("login"))
+
+    token_id, user_id = row
+
+    if request.method == "POST":
+        new_pw = request.form.get("new_password", "").strip()
+        confirm_pw = request.form.get("confirm_password", "").strip()
+        if not new_pw or len(new_pw) < 6:
+            flash("Password must be at least 6 characters.", "danger")
+            return render_template("reset_password.html")
+        if new_pw != confirm_pw:
+            flash("Passwords do not match.", "danger")
+            return render_template("reset_password.html")
+
+        with db_cursor() as cur:
+            cur.execute(
+                "UPDATE users SET password = %s, must_change_password = FALSE WHERE id = %s",
+                (hash_password(new_pw), user_id),
+            )
+            cur.execute(
+                "UPDATE password_reset_tokens SET used_at = NOW() WHERE id = %s",
+                (token_id,),
+            )
+
+        flash("Password reset successfully. You may now sign in.", "success")
+        return redirect(url_for("login"))
+
+    return render_template("reset_password.html")
 
 
 @app.route("/admin/users/add", methods=["POST"])
