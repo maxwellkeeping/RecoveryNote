@@ -40,10 +40,12 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import safe_join, secure_filename
 from tools import generate_docx
 
+_oauth_import_error = ""
 try:
     OAuth = importlib.import_module("authlib.integrations.flask_client").OAuth
-except Exception:
+except Exception as e:
     OAuth = None
+    _oauth_import_error = str(e)
 
 # --- Load .env if present ---
 try:
@@ -170,6 +172,7 @@ def _sso_enabled():
 def _sso_diagnostics():
     values = {
         "oauth_import_available": OAuth is not None,
+        "oauth_import_error": _oauth_import_error,
         "has_entra_client_id": bool(os.environ.get("ENTRA_CLIENT_ID", "").strip()),
         "has_entra_client_secret": bool(
             os.environ.get("ENTRA_CLIENT_SECRET", "").strip()
