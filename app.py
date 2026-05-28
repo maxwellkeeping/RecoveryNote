@@ -1182,9 +1182,14 @@ def auth_callback():
 
     try:
         token = client.authorize_access_token()
-        claims = token.get("userinfo")
-        if not claims:
-            claims = client.parse_id_token(token)
+        id_claims = client.parse_id_token(token) or {}
+        userinfo_claims = token.get("userinfo") or {}
+        # Entra group membership is commonly emitted in ID token claims.
+        # Merge userinfo for profile fields, but preserve ID-token group claims.
+        claims = dict(id_claims)
+        claims.update(userinfo_claims)
+        if "groups" in id_claims:
+            claims["groups"] = id_claims.get("groups")
         user = _get_or_create_entra_user(claims or {})
     except PermissionError as e:
         flash(str(e), "danger")
