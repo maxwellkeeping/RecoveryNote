@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 
 {% block title %}Tracking{% endblock %}
-{% block container_width %}1200{% endblock %}
+{% block container_width %}1100{% endblock %}
 
 {% block extra_css %}
-      .table { margin: 0; font-size: .85rem; }
+      .table { margin: 0; font-size: .82rem; }
+      .table > :not(caption) > * > * { padding: .4rem .45rem; }
       .table thead th {
         background: #f7f9fc;
         color: #0E2841;
@@ -13,7 +14,7 @@
         text-transform: uppercase;
         letter-spacing: .6px;
         border-bottom: 2px solid #d1dbe8;
-        white-space: nowrap;
+        white-space: normal;
       }
       .table tbody tr:hover { background: #f0f7fc; }
       .badge-status {
@@ -29,10 +30,11 @@
       .badge-pending  { background: #fff3cd; color: #664d03; }
       .badge-default  { background: #e4f0f7; color: #156082; }
       .btn-action {
-        font-size: .75rem;
-        padding: .25rem .65rem;
+        font-size: .68rem;
+        padding: .2rem .45rem;
         border-radius: 6px;
         font-weight: 500;
+        line-height: 1.2;
       }
       .btn-generate {
         background: linear-gradient(135deg, #0E2841, #156082);
@@ -58,6 +60,8 @@
         border-color: #d1dbe8;
         font-size: .875rem;
       }
+      .search-bar #search-input { flex: 1 1 280px; min-width: 220px; }
+      .search-bar .form-select { flex: 1 1 180px; }
       .search-bar input:focus {
         border-color: #156082;
         box-shadow: 0 0 0 3px rgba(21,96,130,.15);
@@ -70,7 +74,16 @@
         font-size: .68rem;
         border-radius: 4px;
         padding: 0 .35rem;
-        margin-left: .35rem;
+        margin-left: 0;
+        margin-top: .25rem;
+        display: block;
+      }
+      #track-table td { word-break: break-word; }
+      .actions-cell .d-flex { flex-wrap: wrap; }
+      .eapprovals-link {
+        display: inline-block;
+        max-width: 140px;
+        overflow-wrap: anywhere;
       }
 {% endblock %}
 
@@ -120,7 +133,7 @@
                 <th>End Date</th>
                 <th>Service Owner</th>
                 <th>eApprovals</th>
-                <th style="width:130px">Actions</th>
+                <th style="width:110px">Actions</th>
               </tr>
             </thead>
             <tbody id="track-tbody">
@@ -146,7 +159,7 @@
                     {{ row.get('AGREEMENT_ID') or '—' }}
                   </a>
                 </td>
-                <td style="max-width:220px">
+                <td style="max-width:180px">
                   <a href="{{ url_for('edit', id=row.id) }}"
                      class="text-truncate d-block" title="{{ row.get('AGREEMENT_NAME_DESCRIPTION','') }}"
                      style="color:#0E2841;text-decoration:none;">
@@ -170,7 +183,7 @@
                 <td style="white-space:nowrap">{{ row.get('START_DATE_YYYY_MM_DD') or '—' }}</td>
                 <td style="white-space:nowrap">{{ row.get('END_DATE_YYYY_MM_DD') or '—' }}</td>
                 <td>{{ row.get('SERVICE_OWNER') or '—' }}</td>
-                <td style="white-space:nowrap">
+                <td style="max-width:150px">
                   {% if package_id %}
                     <a href="https://www.eapprovals.cac.gov.on.ca/#/approval/{{ package_id }}"
                        target="_blank" rel="noopener noreferrer" class="eapprovals-link">
@@ -181,7 +194,7 @@
                     <span class="text-muted">Not populated</span>
                   {% endif %}
                 </td>
-                <td>
+                <td class="actions-cell">
                   <div class="d-flex gap-1">
                     <a href="{{ url_for('generate', id=row.id) }}"
                        class="btn btn-action btn-generate" title="Download Recovery Note docx">
