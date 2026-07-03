@@ -15,7 +15,7 @@ def test_login_shows_db_error_message(monkeypatch):
 
     client = app_module.app.test_client()
     response = client.post(
-        "/login",
+        "/admin/login",
         data={"username": "admin", "password": "admin123"},
         follow_redirects=True,
     )
@@ -44,7 +44,7 @@ def test_login_redirects_to_change_password(monkeypatch):
 
     client = app_module.app.test_client()
     response = client.post(
-        "/login",
+        "/admin/login",
         data={"username": "admin", "password": "admin123"},
         follow_redirects=False,
     )
@@ -65,6 +65,7 @@ def test_auth_login_redirects_to_local_when_sso_not_configured(monkeypatch):
     body = response.get_data(as_text=True)
     assert response.status_code == 200
     assert "Microsoft sign-in is not configured" in body
+    assert "Admin Local Sign-In" in body
 
 
 def test_allowed_groups_match(monkeypatch):

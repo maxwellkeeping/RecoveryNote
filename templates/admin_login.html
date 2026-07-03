@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Sign In{% endblock %}
+
+{% block extra_css %}
+      .admin-login-note {
+        background: #fff8e6;
+        border: 1px solid #f0d991;
+        color: #6a5200;
+        border-radius: 8px;
+        padding: .55rem .7rem;
+        font-size: .78rem;
+      }
+      .admin-login-badge {
+        display: inline-block;
+        margin-left: .45rem;
+        background: #f3f6fb;
+        border: 1px solid #d1dbe8;
+        color: #2f4d66;
+        border-radius: 999px;
+        padding: .1rem .5rem;
+        font-size: .65rem;
+        letter-spacing: .3px;
+        text-transform: uppercase;
+        vertical-align: middle;
+      }
+{% endblock %}
+
+{% block content %}
+      <div class="row justify-content-center mt-5">
+        <div class="col-sm-8 col-md-5 col-lg-4">
+          <div class="section-card">
+            <div class="card-header">
+              Admin Local Sign-In
+              <span class="admin-login-badge">Recovery Only</span>
+            </div>
+            <div class="card-body p-4">
+              <div class="admin-login-note mb-3">Use this page only when Microsoft sign-in is unavailable or for break-glass admin access.</div>
+              <form method="post" action="{{ url_for('admin_login') }}">
+                <input type="hidden" name="next" value="{{ request.args.get('next', '') }}">
+                <div class="mb-3">
+                  <label class="form-label" for="username">Username</label>
+                  <input type="text" name="username" id="username" class="form-control"
+                         required autofocus autocomplete="username">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label" for="password">Password</label>
+                  <input type="password" name="password" id="password" class="form-control"
+                         required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn btn-submit w-100">Sign In</button>
+              </form>
+              <div class="text-center mt-3">
+                <a class="small" href="{{ url_for('login', next=request.args.get('next')) }}">Back to Microsoft sign-in</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+{% endblock %}

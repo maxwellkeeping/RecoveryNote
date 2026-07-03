@@ -3,6 +3,7 @@ from flask import (
     render_template,
     request,
     session,
+    has_request_context,
     redirect,
     url_for,
     flash,
@@ -86,6 +87,14 @@ login_manager.init_app(app)
 login_manager.login_view = "login"
 login_manager.login_message_category = "warning"
 
+
+@login_manager.unauthorized_handler
+def _handle_unauthorized():
+    next_url = request.full_path if request.query_string else request.path
+    if request.path.startswith("/admin"):
+        return redirect(url_for("admin_login", next=next_url))
+    return redirect(url_for("login", next=next_url))
+
 _oauth_client = None
 
 
@@ -107,6 +116,43 @@ class User(UserMixin):
     @property
     def is_admin(self):
         return self.role == "admin"
+
+
+def _current_submission_author():
+    if has_request_context():
+        session_author = str(session.get("entra_author") or "").strip()
+        if session_author:
+            return session_author
+
+    user_id = getattr(current_user, "id", None)
+    if user_id is not None:
+        try:
+            with db_cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT email, display_name
+                    FROM oauth_identities
+                    WHERE user_id = %s AND provider = %s
+                    ORDER BY last_login DESC
+                    LIMIT 1
+                    """,
+                    (int(user_id), "entra"),
+                )
+                row = cur.fetchone()
+            if row:
+                # Prefer UPN/email to clearly identify the Entra account.
+                email = str(row[0] or "").strip()
+                display_name = str(row[1] or "").strip()
+                if email:
+                    return email
+                if display_name:
+                    return display_name
+        except Exception:
+            # Fallback below keeps note creation resilient if lookup fails.
+            pass
+
+    username = str(getattr(current_user, "username", "") or "").strip()
+    return username or "unknown"
 
 
 @login_manager.user_loader
@@ -526,6 +572,8 @@ def init_db():
                 s.data->>'AGREEMENT_TYPE'                  AS agreement_type,
                 s.data->>'AGREEMENT_AUTHOR'                AS agreement_author,
                 s.data->>'STATUS'                          AS status,
+                (s.data->>'_status_entered_at')::TIMESTAMPTZ AS status_entered_at,
+                s.data->'_status_history'                 AS status_history,
                 s.data->>'CLIENT_CONTACT_NAME'             AS client_contact_name,
                 s.data->>'PREVIOUS_AGREEMENT'              AS previous_agreement,
                 s.data->>'eApprovals_Package_ID_253_YYYY'  AS eapprovals_package_id,
@@ -635,6 +683,86 @@ def build_comments_text(values=None):
         "<PROVIDE DETAILS ON THE BUSINESS SOLUTION, RATIONALE, WIA/PROJECT AT A HIGH LEVEL "
         "AND 2 TO 3 SENTENCES AT THE MOST>"
     )
+
+
+def _utc_now_iso():
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_status(value):
+    return str(value or "").strip()
+
+
+def _initialize_status_tracking(values):
+    status = _normalize_status((values or {}).get("STATUS"))
+    if not status:
+        return
+    now = _utc_now_iso()
+    values["_status_entered_at"] = now
+    values["_status_history"] = [
+        {
+            "status": status,
+            "changed_at": now,
+            "changed_by": _current_submission_author(),
+        }
+    ]
+
+
+def _apply_status_tracking(existing_values, updated_values):
+    existing_values = existing_values or {}
+
+    old_status = _normalize_status(existing_values.get("STATUS"))
+    new_status = _normalize_status(updated_values.get("STATUS"))
+
+    existing_history = existing_values.get("_status_history", [])
+    history = []
+    if isinstance(existing_history, list):
+        for item in existing_history:
+            if not isinstance(item, dict):
+                continue
+            item_status = _normalize_status(item.get("status"))
+            if not item_status:
+                continue
+            history.append(
+                {
+                    "status": item_status,
+                    "changed_at": str(item.get("changed_at") or "").strip(),
+                    "changed_by": str(item.get("changed_by") or "").strip(),
+                }
+            )
+
+    existing_entered_at = str(existing_values.get("_status_entered_at") or "").strip()
+
+    if not new_status:
+        if existing_entered_at:
+            updated_values["_status_entered_at"] = existing_entered_at
+        if history:
+            updated_values["_status_history"] = history
+        return
+
+    if old_status == new_status:
+        if existing_entered_at:
+            updated_values["_status_entered_at"] = existing_entered_at
+        else:
+            # Backfill for legacy rows where entered-at was never captured.
+            for item in reversed(history):
+                if item.get("status") == new_status and item.get("changed_at"):
+                    updated_values["_status_entered_at"] = item["changed_at"]
+                    break
+        if history:
+            updated_values["_status_history"] = history
+        return
+
+    now = _utc_now_iso()
+    updated_values["_status_entered_at"] = now
+    history.append(
+        {
+            "status": new_status,
+            "changed_at": now,
+            "changed_by": _current_submission_author(),
+        }
+    )
+    updated_values["_status_history"] = history
 
 
 def save_attachments(submission_id, files, existing=None):
@@ -1024,7 +1152,15 @@ def export_csv():
     """Download all submissions as a flat CSV file (admin only)."""
     groups = load_field_groups()
     field_names = [it["name"] for _, items in groups for it in items]
-    headers = ["id", "created_at"] + field_names
+    headers = [
+        "id",
+        "created_at",
+        *field_names,
+        "current_status_entered_at",
+        "status_history_json",
+        "status_transition_path",
+        "days_in_current_status",
+    ]
 
     with db_cursor() as cur:
         cur.execute("SELECT id, created_at, data FROM submissions ORDER BY id")
@@ -1035,7 +1171,52 @@ def export_csv():
     writer.writerow(headers)
     for row_id, created_at, data in rows:
         d = data if isinstance(data, dict) else json.loads(data)
-        writer.writerow([row_id, created_at] + [d.get(f, "") for f in field_names])
+
+        status_entered_at = str(d.get("_status_entered_at") or "").strip()
+        status_history = d.get("_status_history")
+        exported_history = []
+        if isinstance(status_history, list):
+            for item in status_history:
+                if not isinstance(item, dict):
+                    continue
+                item_status = str(item.get("status") or "").strip()
+                if not item_status:
+                    continue
+                exported_history.append(
+                    {
+                        "status": item_status,
+                        "changed_at": str(item.get("changed_at") or "").strip(),
+                    }
+                )
+
+        status_history_json = (
+            json.dumps(exported_history, ensure_ascii=False) if exported_history else ""
+        )
+        status_transition_path = " -> ".join(
+            [item["status"] for item in exported_history]
+        )
+
+        days_in_current_status = ""
+        if status_entered_at:
+            try:
+                entered = datetime.fromisoformat(status_entered_at.replace("Z", "+00:00"))
+                if entered.tzinfo is None:
+                    entered = entered.replace(tzinfo=UTC)
+                days = (datetime.now(UTC) - entered.astimezone(UTC)).days
+                days_in_current_status = str(max(days, 0))
+            except Exception:
+                days_in_current_status = ""
+
+        writer.writerow(
+            [row_id, created_at]
+            + [d.get(f, "") for f in field_names]
+            + [
+                status_entered_at,
+                status_history_json,
+                status_transition_path,
+                days_in_current_status,
+            ]
+        )
 
     response = make_response(buf.getvalue())
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
@@ -1187,10 +1368,18 @@ def map_lookups():
 # ── Authentication routes ────────────────────────────────────────────────────
 
 
-@app.route("/login", methods=["GET", "POST"])
+@app.route("/login", methods=["GET"])
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("track"))
+    return render_template("login.html", sso_enabled=_sso_enabled())
+
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if current_user.is_authenticated:
+        return redirect(url_for("track"))
+
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -1207,7 +1396,8 @@ def login():
                 "Login is temporarily unavailable. Please verify your database connection.",
                 "danger",
             )
-            return render_template("login.html", sso_enabled=_sso_enabled())
+            return render_template("admin_login.html")
+
         if row and verify_password(row[2], password):
             if _is_legacy_sha256_hash(row[2]):
                 try:
@@ -1219,16 +1409,20 @@ def login():
                 except Exception:
                     # Keep login flow working even if opportunistic hash upgrade fails.
                     pass
+
             user = User(row[0], row[1], row[3], bool(row[4]))
             login_user(user)
             if user.must_change_password:
                 return redirect(url_for("change_password"))
+
             next_page = request.form.get("next") or request.args.get("next")
             if next_page and _is_safe_redirect_target(next_page):
                 return redirect(next_page)
             return redirect(url_for("track"))
+
         flash("Invalid username or password.", "danger")
-    return render_template("login.html", sso_enabled=_sso_enabled())
+
+    return render_template("admin_login.html")
 
 
 @app.route("/auth/login", methods=["GET"])
@@ -1239,7 +1433,7 @@ def auth_login():
     client = _get_entra_client()
     if client is None:
         flash("Microsoft sign-in is not configured for this environment.", "warning")
-        return redirect(url_for("login"))
+        return redirect(url_for("admin_login"))
 
     next_page = request.args.get("next")
     if next_page and _is_safe_redirect_target(next_page):
@@ -1295,6 +1489,11 @@ def auth_callback():
                 claims["groups"] = at_claims.get("groups")
         if not claims:
             raise PermissionError("Microsoft sign-in returned no usable identity claims.")
+        session_author = _resolve_entra_username(claims) or _resolve_entra_display_name(
+            claims
+        )
+        if session_author:
+            session["entra_author"] = session_author
         user = _get_or_create_entra_user(claims or {}, token.get("access_token", ""))
     except PermissionError as e:
         flash(str(e), "danger")
@@ -1340,6 +1539,7 @@ def change_password():
 @login_required
 def logout():
     session.pop("post_auth_next", None)
+    session.pop("entra_author", None)
     logout_user()
     flash("Logged out.", "info")
     return redirect(url_for("login"))
@@ -1352,7 +1552,10 @@ def logout():
 @login_required
 def form():
     groups = load_field_groups()
-    values = {"COMMENTS": build_comments_text({})}
+    values = {
+        "COMMENTS": build_comments_text({}),
+        "AGREEMENT_AUTHOR": _current_submission_author(),
+    }
     copy_from = request.args.get("copy_from", type=int)
     if copy_from is not None:
         with db_cursor() as cur:
@@ -1363,6 +1566,7 @@ def form():
             return redirect(url_for("track"))
         source_values = dict(row[0]) if isinstance(row[0], dict) else {}
         values = prepare_copy_values(source_values)
+        values["AGREEMENT_AUTHOR"] = _current_submission_author()
         if not (values.get("COMMENTS") or "").strip():
             values["COMMENTS"] = build_comments_text(values)
         flash("Copy loaded. Update the new Agreement ID before saving.", "info")
@@ -1408,7 +1612,10 @@ def submit():
     values = {}
     for gname, items in groups:
         for it in items:
-            v = request.form.get(it["name"], "").strip()
+            if it["name"] == "AGREEMENT_AUTHOR":
+                v = _current_submission_author()
+            else:
+                v = request.form.get(it["name"], "").strip()
             values[it["name"]] = v
             if it["required"] and v == "":
                 missing.append(it["label"])
@@ -1419,6 +1626,8 @@ def submit():
 
     if not (values.get("COMMENTS") or "").strip():
         values["COMMENTS"] = build_comments_text(values)
+
+    _initialize_status_tracking(values)
 
     values["_created_at"] = date.today().isoformat()
     with db_cursor() as cur:
@@ -1456,11 +1665,15 @@ def update(id):
         flash("Submission not found.", "danger")
         return redirect(url_for("track"))
     groups = load_field_groups()
+    original_author = row[0].get("AGREEMENT_AUTHOR") or _current_submission_author()
     missing = []
     values = {}
     for gname, items in groups:
         for it in items:
-            v = request.form.get(it["name"], "").strip()
+            if it["name"] == "AGREEMENT_AUTHOR":
+                v = original_author
+            else:
+                v = request.form.get(it["name"], "").strip()
             values[it["name"]] = v
             if it["required"] and v == "":
                 missing.append(it["label"])
@@ -1477,6 +1690,7 @@ def update(id):
     if not (values.get("COMMENTS") or "").strip():
         values["COMMENTS"] = build_comments_text(values)
     values["_created_at"] = row[0].get("_created_at", date.today().isoformat())
+    _apply_status_tracking(row[0], values)
     attachments = save_attachments(
         id,
         request.files.getlist("attachments"),
@@ -1710,7 +1924,7 @@ def reset_password(token):
 
     if row is None:
         flash("Reset link is invalid or expired.", "danger")
-        return redirect(url_for("login"))
+        return redirect(url_for("admin_login"))
 
     token_id, user_id = row
 
@@ -1735,7 +1949,7 @@ def reset_password(token):
             )
 
         flash("Password reset successfully. You may now sign in.", "success")
-        return redirect(url_for("login"))
+        return redirect(url_for("admin_login"))
 
     return render_template("reset_password.html")
 
@@ -1760,6 +1974,36 @@ def admin_users_add():
         flash(f'User "{username}" created.', "success")
     except Exception:
         flash(f'Could not create user "{username}" (may already exist).', "danger")
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/users/role/<int:user_id>", methods=["POST"])
+@admin_required
+def admin_users_set_role(user_id):
+    if user_id == current_user.id:
+        flash("You cannot change your own role from this page.", "danger")
+        return redirect(url_for("admin_users"))
+
+    new_role = (request.form.get("role", "") or "").strip().lower()
+    if new_role not in ("admin", "user"):
+        flash("Invalid role selection.", "danger")
+        return redirect(url_for("admin_users"))
+
+    with db_cursor() as cur:
+        cur.execute("SELECT username, role FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        if row is None:
+            flash("User not found.", "danger")
+            return redirect(url_for("admin_users"))
+
+        username, current_role = row
+        if current_role == new_role:
+            flash(f'User "{username}" is already {new_role}.', "info")
+            return redirect(url_for("admin_users"))
+
+        cur.execute("UPDATE users SET role = %s WHERE id = %s", (new_role, user_id))
+
+    flash(f'Updated "{username}" role to {new_role}.', "success")
     return redirect(url_for("admin_users"))
 
 
