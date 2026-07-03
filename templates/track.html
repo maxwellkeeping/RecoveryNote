@@ -6,6 +6,10 @@
 {% block extra_css %}
       .table { margin: 0; font-size: .82rem; }
       .table > :not(caption) > * > * { padding: .4rem .45rem; }
+      #track-table {
+        width: 100%;
+        table-layout: fixed;
+      }
       .table thead th {
         background: #f7f9fc;
         color: #0E2841;
@@ -78,7 +82,20 @@
         margin-top: .25rem;
         display: block;
       }
-      #track-table td { word-break: break-word; }
+      #track-table td {
+        word-break: normal;
+        overflow-wrap: break-word;
+      }
+      #track-table th:nth-child(1), #track-table td:nth-child(1) { width: 40px; }
+      #track-table th:nth-child(2), #track-table td:nth-child(2) { width: 120px; }
+      #track-table th:nth-child(3), #track-table td:nth-child(3) { width: 180px; }
+      #track-table th:nth-child(4), #track-table td:nth-child(4) { width: 100px; }
+      #track-table th:nth-child(5), #track-table td:nth-child(5) { width: 95px; }
+      #track-table th:nth-child(11), #track-table td:nth-child(11) { width: 110px; }
+      .col-status .badge-status {
+        white-space: nowrap;
+        display: inline-block;
+      }
       .actions-cell .d-flex { flex-wrap: wrap; }
       .eapprovals-link {
         display: inline-block;
@@ -126,8 +143,8 @@
                 <th style="width:40px">#</th>
                 <th>Agreement ID</th>
                 <th>Name / Description</th>
-                <th>Type</th>
-                <th>Status</th>
+                <th class="col-type">Type</th>
+                <th class="col-status">Status</th>
                 <th>Author</th>
                 <th>Start Date</th>
                 <th>End Date</th>
@@ -166,8 +183,8 @@
                     {{ row.get('AGREEMENT_NAME_DESCRIPTION') or '—' }}
                   </a>
                 </td>
-                <td>{{ row.get('AGREEMENT_TYPE') or '—' }}</td>
-                <td>
+                <td class="col-type">{{ row.get('AGREEMENT_TYPE') or '—' }}</td>
+                <td class="col-status">
                   {% set status = row.get('STATUS','') | lower %}
                   {% if 'active' in status %}
                     <span class="badge-status badge-active">{{ row.get('STATUS') }}</span>
