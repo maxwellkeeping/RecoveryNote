@@ -81,6 +81,47 @@ app.jinja_env.globals["sanitize_name"] = lambda s: re.sub(
     r"[^0-9A-Za-z]+", "_", s
 ).strip("_")
 
+
+def _runtime_environment():
+    """Return one of: local, staging, production."""
+    explicit = os.environ.get("APP_ENV", "").strip().lower()
+    if explicit in {"local", "staging", "production", "prod"}:
+        return "production" if explicit == "prod" else explicit
+
+    slot_name = os.environ.get("WEBSITE_SLOT_NAME", "").strip().lower()
+    if slot_name == "staging":
+        return "staging"
+
+    if has_request_context():
+        host = (request.host or "").lower()
+        if "localhost" in host or host.startswith("127.0.0.1"):
+            return "local"
+        if "-staging." in host:
+            return "staging"
+
+    return "production"
+
+
+@app.context_processor
+def inject_environment_theme():
+    env = _runtime_environment()
+    body_class = ""
+    label = ""
+    if env == "local":
+        body_class = "env-local"
+        label = "LOCAL"
+    elif env == "staging":
+        body_class = "env-staging"
+        label = "STAGING"
+
+    title_prefix = f"[{label}] " if label else ""
+    return {
+        "env_name": env,
+        "env_label": label,
+        "env_body_class": body_class,
+        "env_title_prefix": title_prefix,
+    }
+
 # ── Flask-Login setup ────────────────────────────────────────────────────────
 login_manager = LoginManager()
 login_manager.init_app(app)
