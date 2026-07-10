@@ -21,6 +21,8 @@
 ## Running Tests
 - Unit tests: `pytest`
 - Playwright login test: `pytest tests/test_login_playwright.py`
+- Playwright agreement ID regression test: `pytest tests/test_agreement_id_playwright.py`
+- Run both Playwright tests: `pytest tests/test_login_playwright.py tests/test_agreement_id_playwright.py`
 
 ## Code Quality Automation
 1. Install dev tools:
@@ -41,6 +43,11 @@
   ```
 
 GitHub Actions now runs these checks on pushes and pull requests via `.github/workflows/ci.yml`.
+The workflow also includes a dedicated `playwright-e2e` job that provisions PostgreSQL, starts the app, and runs both Playwright tests.
+
+## CI Jobs
+- `quality`: formatting, linting, typing, and unit test checks (`black`, `ruff`, `mypy`, `pytest` excluding Playwright).
+- `playwright-e2e`: browser-based end-to-end checks (`tests/test_login_playwright.py` and `tests/test_agreement_id_playwright.py`) against a live app + PostgreSQL service.
 
 ## Azure Slot Release (Safe Deploy)
 This repo includes a manual slot-release workflow in `.github/workflows/azure-slot-release.yml`.

@@ -159,6 +159,7 @@
                              class="form-control"
                              placeholder="{{ it.placeholder or '' }}"
                              value="{{ values.get(it.name, '') }}"
+                             {% if it.name == 'AGREEMENT_AUTHOR' %}readonly{% endif %}
                              {% if it.required %}required{% endif %}>
                     {% endif %}
 
@@ -301,20 +302,32 @@
                      String(today.getMonth()+1).padStart(2,'0') + '-' +
                      String(today.getDate()).padStart(2,'0');
 
-      // If editing, parse existing value into sub-fields
+      // If editing, parse existing value into sub-fields.
       if (idField.value) {
-        var parts = idField.value.match(/^([A-Z]+)-(\d{8})-RN(\d+?)(\d{2})(\d{3,})$/);
+        var parts = idField.value.match(/^([A-Z]+)-(\d{8})-RN(\d+)$/);
         if (parts) {
+          var abbr = parts[1];
+          var compactDate = parts[2];
+          var tail = parts[3];
           var opts = cluster.options;
           for (var i = 0; i < opts.length; i++) {
-            if (opts[i].value.split('|')[0] === parts[1]) {
-              cluster.value = opts[i].value;
-              break;
+            var value = opts[i].value || '';
+            var optParts = value.split('|');
+            var optAbbr = optParts[0] || '';
+            var optNum = optParts[1] || '';
+            if (!optNum || optAbbr !== abbr || !tail.startsWith(optNum)) {
+              continue;
             }
+            var rest = tail.slice(optNum.length);
+            if (rest.length < 5) {
+              continue;
+            }
+            cluster.value = value;
+            dateEl.value = compactDate.substring(0,4)+'-'+compactDate.substring(4,6)+'-'+compactDate.substring(6,8);
+            fyend.value = rest.substring(0,2);
+            seqEl.value = rest.substring(2);
+            break;
           }
-          dateEl.value = parts[2].substring(0,4)+'-'+parts[2].substring(4,6)+'-'+parts[2].substring(6,8);
-          fyend.value = parts[4];
-          seqEl.value = parts[5];
         }
       }
 

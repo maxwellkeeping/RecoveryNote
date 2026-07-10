@@ -318,7 +318,12 @@ def _entra_redirect_uri():
     configured = os.environ.get("ENTRA_REDIRECT_URI", "").strip()
     if configured:
         return configured
-    return url_for("auth_callback", _external=True)
+    callback = url_for("auth_callback", _external=True)
+    # App Service may surface http in upstream URL construction; enforce https
+    # for non-local callbacks to match Entra app registration values.
+    if callback.startswith("http://") and "localhost" not in callback and "127.0.0.1" not in callback:
+        callback = "https://" + callback[len("http://") :]
+    return callback
 
 
 def _get_entra_client():

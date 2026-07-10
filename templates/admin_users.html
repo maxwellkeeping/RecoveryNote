@@ -78,6 +78,13 @@
                 <td>
                   {% if user[0] != current_user.id %}
                   <div class="d-flex gap-2">
+                    <form method="post" action="{{ url_for('admin_users_set_role', user_id=user[0]) }}"
+                          onsubmit="return confirm('Change role for {{ user[1] }} to {{ 'user' if user[2] == 'admin' else 'admin' }}?')">
+                      <input type="hidden" name="role" value="{{ 'user' if user[2] == 'admin' else 'admin' }}">
+                      <button type="submit" class="btn btn-sm btn-outline-primary">
+                        {{ 'Set as User' if user[2] == 'admin' else 'Set as Admin' }}
+                      </button>
+                    </form>
                     <form method="post" action="{{ url_for('admin_users_reset', user_id=user[0]) }}"
                           onsubmit="return confirm('Create password reset link for {{ user[1] }}?')">
                       <button type="submit" class="btn btn-sm btn-outline-warning">Create Reset Link</button>
