@@ -8,19 +8,22 @@
           <div class="section-card">
             <div class="card-header">Sign In</div>
             <div class="card-body p-4">
-              <form method="post" action="{{ url_for('login') }}">
-                <div class="mb-3">
-                  <label class="form-label" for="username">Username</label>
-                  <input type="text" name="username" id="username" class="form-control"
-                         required autofocus autocomplete="username">
-                </div>
-                <div class="mb-3">
-                  <label class="form-label" for="password">Password</label>
-                  <input type="password" name="password" id="password" class="form-control"
-                         required autocomplete="current-password">
-                </div>
-                <button type="submit" class="btn btn-submit w-100">Sign In</button>
-              </form>
+              {% if sso_enabled %}
+              <a class="btn btn-primary w-100 mb-3" href="{{ url_for('auth_login', next=request.args.get('next')) }}">
+                Sign in with Microsoft
+              </a>
+              <div class="text-muted small text-center">Local account is for admin recovery only.</div>
+              <div class="text-center mt-2">
+                <a class="small" href="{{ url_for('admin_login', next=request.args.get('next')) }}">Use local admin sign-in</a>
+              </div>
+              {% else %}
+              <div class="alert alert-warning py-2" role="alert">
+                Microsoft sign-in is not configured for this environment.
+              </div>
+              <a class="btn btn-submit w-100" href="{{ url_for('admin_login', next=request.args.get('next')) }}">
+                Continue with Local Admin Sign-In
+              </a>
+              {% endif %}
             </div>
           </div>
         </div>

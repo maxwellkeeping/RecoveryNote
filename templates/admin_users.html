@@ -8,6 +8,29 @@
         <p><a href="{{ url_for('admin') }}">&larr; Back to Admin</a></p>
       </div>
 
+      {% if reset_link %}
+      <div class="section-card mb-4 border border-info-subtle">
+        <div class="card-header">Password Reset Link</div>
+        <div class="card-body">
+          <p class="mb-2" style="font-size:.85rem">
+            Link generated for <strong>{{ reset_link.username }}</strong>. Share this securely.
+          </p>
+          <div class="d-flex flex-column flex-md-row gap-2 align-items-md-center">
+            <div class="form-control masked-input" style="background:#f7f9fc">{{ reset_link.masked_url }}</div>
+            <button
+              type="button"
+              id="copyResetLink"
+              class="btn btn-sm btn-outline-primary"
+              data-reset-url="{{ reset_link.url }}"
+            >
+              Copy Reset Link
+            </button>
+          </div>
+          <small id="copyResetStatus" class="text-muted d-block mt-2"></small>
+        </div>
+      </div>
+      {% endif %}
+
       <!-- Add User Form -->
       <div class="section-card mb-4">
         <div class="card-header">Add User</div>
@@ -44,7 +67,7 @@
               <tr>
                 <th style="padding-left:1rem">Username</th>
                 <th>Role</th>
-                <th style="width:100px"></th>
+                <th style="width:220px"></th>
               </tr>
             </thead>
             <tbody>
@@ -54,10 +77,23 @@
                 <td><span class="badge bg-{{ 'primary' if user[2] == 'admin' else 'secondary' }}">{{ user[2] }}</span></td>
                 <td>
                   {% if user[0] != current_user.id %}
-                  <form method="post" action="{{ url_for('admin_users_delete', user_id=user[0]) }}"
-                        onsubmit="return confirm('Delete user {{ user[1] }}?')">
-                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-                  </form>
+                  <div class="d-flex gap-2">
+                    <form method="post" action="{{ url_for('admin_users_set_role', user_id=user[0]) }}"
+                          onsubmit="return confirm('Change role for {{ user[1] }} to {{ 'user' if user[2] == 'admin' else 'admin' }}?')">
+                      <input type="hidden" name="role" value="{{ 'user' if user[2] == 'admin' else 'admin' }}">
+                      <button type="submit" class="btn btn-sm btn-outline-primary">
+                        {{ 'Set as User' if user[2] == 'admin' else 'Set as Admin' }}
+                      </button>
+                    </form>
+                    <form method="post" action="{{ url_for('admin_users_reset', user_id=user[0]) }}"
+                          onsubmit="return confirm('Create password reset link for {{ user[1] }}?')">
+                      <button type="submit" class="btn btn-sm btn-outline-warning">Create Reset Link</button>
+                    </form>
+                    <form method="post" action="{{ url_for('admin_users_delete', user_id=user[0]) }}"
+                          onsubmit="return confirm('Delete user {{ user[1] }}?')">
+                      <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                    </form>
+                  </div>
                   {% else %}
                   <span class="text-muted" style="font-size:.75rem">You</span>
                   {% endif %}
@@ -68,4 +104,29 @@
           </table>
         </div>
       </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    (function () {
+      const copyBtn = document.getElementById("copyResetLink");
+      const status = document.getElementById("copyResetStatus");
+      if (!copyBtn || !status) return;
+
+      copyBtn.addEventListener("click", async function () {
+        const resetUrl = copyBtn.getAttribute("data-reset-url") || "";
+        if (!resetUrl) {
+          status.textContent = "Reset link unavailable.";
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(resetUrl);
+          status.textContent = "Reset link copied.";
+        } catch (err) {
+          status.textContent = "Copy failed. Select and copy manually.";
+        }
+      });
+    })();
+  </script>
 {% endblock %}

@@ -1,42 +1,109 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file
+from flask import (
+    Flask,
+    render_template,
+    request,
+    session,
+    has_request_context,
+    redirect,
+    url_for,
+    flash,
+    jsonify,
+    make_response,
+    send_file,
+    abort,
+)
+import csv
+import io
+import importlib
 import json
+import base64
 import os
+import pathlib
 import re
+import secrets
 import sys
 import hashlib
 from contextlib import contextmanager
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from functools import wraps
+from urllib.parse import urljoin, urlparse
 
 import psycopg2
 import psycopg2.extras
-from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+import requests
+from flask_login import (
+    LoginManager,
+    UserMixin,
+    login_user,
+    logout_user,
+    login_required,
+    current_user,
+)
+from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import safe_join, secure_filename
+from tools import generate_docx
+
+try:
+    OAuth = importlib.import_module("authlib.integrations.flask_client").OAuth
+except Exception:
+    OAuth = None
+
+# --- Load .env if present ---
+try:
+    from dotenv import load_dotenv
+
+    # Prefer project .env values for local development to avoid stale shell vars.
+    load_dotenv(override=True)
+except ImportError:
+    print(
+        "WARNING: python-dotenv not installed; .env support unavailable.",
+        file=sys.stderr,
+    )
 
 APP_DIR = os.path.dirname(__file__)
-sys.path.insert(0, os.path.join(APP_DIR, 'tools'))
-import generate_docx
 
 # Config JSON files — override with DATA_DIR env var (defaults to app directory)
-_DATA_DIR = os.environ.get('DATA_DIR', APP_DIR)
-FG_PATH = os.path.join(_DATA_DIR, 'field_groups.json')
-LOOKUP_PATH = os.path.join(_DATA_DIR, 'field_lookups.json')
-LOOKUP_MAP = os.path.join(_DATA_DIR, 'lookup_mappings.json')
+_DATA_DIR = os.environ.get("DATA_DIR", APP_DIR)
+FG_PATH = os.path.join(_DATA_DIR, "field_groups.json")
+LOOKUP_PATH = os.path.join(_DATA_DIR, "field_lookups.json")
+LOOKUP_MAP = os.path.join(_DATA_DIR, "lookup_mappings.json")
+UPLOADS_DIR = os.path.join(APP_DIR, "uploads")
 
 # PostgreSQL connection string — set DATABASE_URL in environment.
 # Read dynamically on each call so Key Vault references that resolve after
 # startup are picked up, and so a missing value at boot doesn't crash the app.
-DATABASE_URL = os.environ.get('DATABASE_URL')
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-in-production')
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
 # expose sanitize helper to templates
-app.jinja_env.globals['sanitize_name'] = lambda s: re.sub(r"[^0-9A-Za-z]+", '_', s).strip('_')
+app.jinja_env.globals["sanitize_name"] = lambda s: re.sub(
+    r"[^0-9A-Za-z]+", "_", s
+).strip("_")
 
 # ── Flask-Login setup ────────────────────────────────────────────────────────
 login_manager = LoginManager()
 login_manager.init_app(app)
-login_manager.login_view = 'login'
-login_manager.login_message_category = 'warning'
+login_manager.login_view = "login"
+login_manager.login_message_category = "warning"
+
+
+@login_manager.unauthorized_handler
+def _handle_unauthorized():
+    next_url = request.full_path if request.query_string else request.path
+    if request.path.startswith("/admin"):
+        return redirect(url_for("admin_login", next=next_url))
+    return redirect(url_for("login", next=next_url))
+
+_oauth_client = None
+
+
+def _entra_scopes():
+    configured = os.environ.get("ENTRA_SCOPES", "").strip()
+    if configured:
+        return configured
+    # User.Read enables fallback Graph membership lookup for group overage claims.
+    return "openid profile email User.Read"
 
 
 class User(UserMixin):
@@ -48,14 +115,54 @@ class User(UserMixin):
 
     @property
     def is_admin(self):
-        return self.role == 'admin'
+        return self.role == "admin"
+
+
+def _current_submission_author():
+    if has_request_context():
+        session_author = str(session.get("entra_author") or "").strip()
+        if session_author:
+            return session_author
+
+    user_id = getattr(current_user, "id", None)
+    if user_id is not None:
+        try:
+            with db_cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT email, display_name
+                    FROM oauth_identities
+                    WHERE user_id = %s AND provider = %s
+                    ORDER BY last_login DESC
+                    LIMIT 1
+                    """,
+                    (int(user_id), "entra"),
+                )
+                row = cur.fetchone()
+            if row:
+                # Prefer UPN/email to clearly identify the Entra account.
+                email = str(row[0] or "").strip()
+                display_name = str(row[1] or "").strip()
+                if email:
+                    return email
+                if display_name:
+                    return display_name
+        except Exception:
+            # Fallback below keeps note creation resilient if lookup fails.
+            pass
+
+    username = str(getattr(current_user, "username", "") or "").strip()
+    return username or "unknown"
 
 
 @login_manager.user_loader
 def load_user(user_id):
     try:
         with db_cursor() as cur:
-            cur.execute("SELECT id, username, role, must_change_password FROM users WHERE id = %s", (int(user_id),))
+            cur.execute(
+                "SELECT id, username, role, must_change_password FROM users WHERE id = %s",
+                (int(user_id),),
+            )
             row = cur.fetchone()
         if row:
             return User(row[0], row[1], row[2], row[3])
@@ -66,33 +173,335 @@ def load_user(user_id):
 
 def admin_required(f):
     """Decorator: requires login + admin role."""
+
     @wraps(f)
     @login_required
     def decorated(*args, **kwargs):
         if not current_user.is_admin:
-            flash('Admin access required.', 'danger')
-            return redirect(url_for('track'))
+            flash("Admin access required.", "danger")
+            return redirect(url_for("track"))
         return f(*args, **kwargs)
+
     return decorated
 
 
 def hash_password(password):
-    """Simple SHA-256 hash. Adequate for PoC; upgrade to bcrypt for production."""
-    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+    """Return a strong password hash for storage."""
+    return generate_password_hash(password)
+
+
+def _generate_reset_token():
+    return secrets.token_urlsafe(32)
+
+
+def _is_legacy_sha256_hash(stored_hash):
+    return bool(re.fullmatch(r"[0-9a-f]{64}", (stored_hash or "")))
+
+
+def verify_password(stored_hash, password):
+    """Verify password against modern hashes and legacy SHA-256 hashes."""
+    if not stored_hash:
+        return False
+    if _is_legacy_sha256_hash(stored_hash):
+        return hashlib.sha256(password.encode("utf-8")).hexdigest() == stored_hash
+    try:
+        return check_password_hash(stored_hash, password)
+    except (ValueError, TypeError):
+        return False
+
+
+def _is_safe_redirect_target(target):
+    if not target:
+        return False
+    ref_url = urlparse(request.host_url)
+    test_url = urlparse(urljoin(request.host_url, target))
+    return test_url.scheme in ("http", "https") and ref_url.netloc == test_url.netloc
+
+
+def _sso_enabled():
+    return bool(
+        OAuth is not None
+        and os.environ.get("ENTRA_CLIENT_ID")
+        and os.environ.get("ENTRA_CLIENT_SECRET")
+        and os.environ.get("ENTRA_TENANT_ID")
+    )
+
+
+def _entra_allowed_group_ids():
+    raw = os.environ.get("ENTRA_ALLOWED_GROUP_IDS", "")
+    return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+
+def _claim_groups(claims):
+    groups = claims.get("groups", []) if isinstance(claims, dict) else []
+    if isinstance(groups, str):
+        return [groups.strip().lower()]
+    if isinstance(groups, list):
+        return [str(g).strip().lower() for g in groups if g]
+    return []
+
+
+def _claims_from_jwt_unverified(token_value):
+    """Parse JWT claims without signature verification for non-security hints.
+
+    This is only used to read optional group claims that Azure may emit in
+    access_token instead of id_token; authorization still requires exact group
+    ID matching.
+    """
+    if not token_value or token_value.count(".") < 2:
+        return {}
+    try:
+        payload = token_value.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        decoded = base64.urlsafe_b64decode(payload.encode("utf-8"))
+        data = json.loads(decoded.decode("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _claims_indicate_group_overage(claims):
+    if not isinstance(claims, dict):
+        return False
+    if claims.get("hasgroups"):
+        return True
+    claim_names = claims.get("_claim_names")
+    return isinstance(claim_names, dict) and "groups" in claim_names
+
+
+def _fetch_user_group_ids_from_graph(access_token):
+    if not access_token:
+        return set()
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+    url = "https://graph.microsoft.com/v1.0/me/transitiveMemberOf/microsoft.graph.group?$select=id"
+    groups = set()
+
+    try:
+        while url:
+            resp = requests.get(url, headers=headers, timeout=8)
+            resp.raise_for_status()
+            payload = resp.json() if resp.content else {}
+            for item in payload.get("value", []):
+                gid = str(item.get("id") or "").strip().lower()
+                if gid:
+                    groups.add(gid)
+            url = payload.get("@odata.nextLink")
+    except Exception as e:
+        print(f"WARNING: Could not resolve Entra groups from Graph: {e}", file=sys.stderr)
+        return None
+
+    return groups
+
+
+def _is_user_in_allowed_groups(claims, access_token=""):
+    allowed = _entra_allowed_group_ids()
+    if not allowed:
+        return True
+    user_groups = set(_claim_groups(claims))
+    if allowed.intersection(user_groups):
+        return True
+
+    if _claims_indicate_group_overage(claims):
+        graph_groups = _fetch_user_group_ids_from_graph(access_token)
+        if graph_groups is None:
+            raise PermissionError(
+                "Microsoft sign-in is missing Graph permissions needed to validate group access. "
+                "Ensure User.Read is requested/consented and try again."
+            )
+        return bool(allowed.intersection(graph_groups))
+
+    return False
+
+
+def _entra_redirect_uri():
+    configured = os.environ.get("ENTRA_REDIRECT_URI", "").strip()
+    if configured:
+        return configured
+    callback = url_for("auth_callback", _external=True)
+    # App Service may surface http in upstream URL construction; enforce https
+    # for non-local callbacks to match Entra app registration values.
+    if callback.startswith("http://") and "localhost" not in callback and "127.0.0.1" not in callback:
+        callback = "https://" + callback[len("http://") :]
+    return callback
+
+
+def _get_entra_client():
+    global _oauth_client
+    if not _sso_enabled():
+        return None
+    if _oauth_client is not None:
+        return _oauth_client
+
+    tenant_id = os.environ.get("ENTRA_TENANT_ID", "").strip()
+    authority = os.environ.get(
+        "ENTRA_AUTHORITY",
+        f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+    ).rstrip("/")
+
+    oauth = OAuth(app)
+    oauth.register(
+        name="entra",
+        client_id=os.environ.get("ENTRA_CLIENT_ID"),
+        client_secret=os.environ.get("ENTRA_CLIENT_SECRET"),
+        server_metadata_url=f"{authority}/.well-known/openid-configuration",
+        client_kwargs={"scope": _entra_scopes()},
+    )
+    _oauth_client = oauth.create_client("entra")
+    return _oauth_client
+
+
+def _resolve_entra_subject(claims):
+    if not isinstance(claims, dict):
+        return ""
+    return str(claims.get("oid") or claims.get("sub") or "").strip()
+
+
+def _resolve_entra_username(claims):
+    if not isinstance(claims, dict):
+        return ""
+    value = (
+        claims.get("preferred_username")
+        or claims.get("email")
+        or claims.get("upn")
+        or ""
+    )
+    return str(value).strip().lower()
+
+
+def _resolve_entra_display_name(claims):
+    if not isinstance(claims, dict):
+        return ""
+    return str(claims.get("name") or "").strip()
+
+
+def _ensure_unique_username(base_username):
+    candidate = base_username
+    suffix = 1
+    while True:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM users WHERE lower(username) = lower(%s)",
+                (candidate,),
+            )
+            if cur.fetchone() is None:
+                return candidate
+        candidate = f"{base_username}-{suffix}"
+        suffix += 1
+
+
+def _get_or_create_entra_user(claims, access_token=""):
+    subject = _resolve_entra_subject(claims)
+    if not subject:
+        raise PermissionError("Microsoft sign-in response is missing a user identifier.")
+
+    if not _is_user_in_allowed_groups(claims, access_token):
+        raise PermissionError("Your account is not in an allowed access group.")
+
+    username = _resolve_entra_username(claims)
+    display_name = _resolve_entra_display_name(claims)
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.id, u.username, u.role, u.must_change_password
+            FROM oauth_identities oi
+            JOIN users u ON u.id = oi.user_id
+            WHERE oi.provider = %s AND oi.provider_sub = %s
+            """,
+            ("entra", subject),
+        )
+        mapped = cur.fetchone()
+        if mapped:
+            cur.execute(
+                """
+                UPDATE oauth_identities
+                SET email = %s, display_name = %s, last_login = NOW()
+                WHERE provider = %s AND provider_sub = %s
+                """,
+                (username or None, display_name or None, "entra", subject),
+            )
+            return User(mapped[0], mapped[1], mapped[2], bool(mapped[3]))
+
+    if not username:
+        raise PermissionError(
+            "Microsoft sign-in did not include an email/UPN claim for user mapping."
+        )
+
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT id, username, role, must_change_password FROM users WHERE lower(username) = lower(%s)",
+            (username,),
+        )
+        user_row = cur.fetchone()
+
+    if user_row:
+        user_id, user_name, role, must_change = user_row
+    else:
+        unique_username = _ensure_unique_username(username)
+        with db_cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO users (username, password, role, must_change_password)
+                VALUES (%s, %s, %s, FALSE)
+                RETURNING id, username, role, must_change_password
+                """,
+                (
+                    unique_username,
+                    hash_password(secrets.token_urlsafe(24)),
+                    "user",
+                ),
+            )
+            created = cur.fetchone()
+        user_id, user_name, role, must_change = created
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO oauth_identities (user_id, provider, provider_sub, email, display_name)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (provider, provider_sub)
+            DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                email = EXCLUDED.email,
+                display_name = EXCLUDED.display_name,
+                last_login = NOW()
+            """,
+            (user_id, "entra", subject, username or None, display_name or None),
+        )
+
+    return User(user_id, user_name, role, bool(must_change))
+
+
+def _submission_upload_dir(submission_id):
+    """Resolve upload directory safely under UPLOADS_DIR for a numeric submission id."""
+    sid = str(submission_id).strip()
+    if not re.fullmatch(r"\d+", sid):
+        raise ValueError("Invalid submission id for upload path")
+    uploads_root = pathlib.Path(UPLOADS_DIR).resolve()
+    target = (uploads_root / sid).resolve()
+    if uploads_root not in target.parents and target != uploads_root:
+        raise ValueError("Upload path escapes root")
+    return str(target)
 
 
 @contextmanager
 def db_cursor():
-    """Yield a psycopg2 cursor; commits on clean exit, rolls back on error."""
-    dsn = os.environ.get('DATABASE_URL') or DATABASE_URL
-    conn = psycopg2.connect(dsn, connect_timeout=10)
+    """Yield a psycopg2 cursor; commits on clean exit, rolls back on error. Improved error logging."""
+    dsn = os.environ.get("DATABASE_URL") or DATABASE_URL
+    try:
+        conn = psycopg2.connect(dsn, connect_timeout=10)
+    except Exception as e:
+        print(f"ERROR: Could not connect to database: {e}", file=sys.stderr)
+        raise
     try:
         cur = conn.cursor()
         try:
             yield cur
             conn.commit()
-        except Exception:
+        except Exception as e:
             conn.rollback()
+            print(f"ERROR: Database operation failed: {e}", file=sys.stderr)
             raise
         finally:
             cur.close()
@@ -119,6 +528,32 @@ def init_db():
                 must_change_password  BOOLEAN NOT NULL DEFAULT TRUE
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id          SERIAL PRIMARY KEY,
+                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token       VARCHAR(255) UNIQUE NOT NULL,
+                expires_at  TIMESTAMPTZ NOT NULL,
+                used_at     TIMESTAMPTZ,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS oauth_identities (
+                id            SERIAL PRIMARY KEY,
+                user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                provider      VARCHAR(40) NOT NULL,
+                provider_sub  VARCHAR(255) NOT NULL,
+                email         VARCHAR(255),
+                display_name  VARCHAR(255),
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_login    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(provider, provider_sub)
+            )
+        """)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_oauth_identities_user_id ON oauth_identities(user_id)"
+        )
         # Migrate: add must_change_password column if missing (existing DBs)
         cur.execute("""
             DO $$
@@ -131,13 +566,58 @@ def init_db():
                 END IF;
             END $$;
         """)
+        # Flat view for Power BI / reporting (CREATE OR REPLACE so it upgrades on restart)
+        cur.execute("""
+            CREATE OR REPLACE VIEW submissions_flat AS
+            SELECT
+                s.id,
+                s.created_at,
+                s.data->>'AGREEMENT_ID'                    AS agreement_id,
+                s.data->>'AGREEMENT_NAME_DESCRIPTION'      AS agreement_name_description,
+                s.data->>'AGREEMENT_TYPE'                  AS agreement_type,
+                s.data->>'AGREEMENT_AUTHOR'                AS agreement_author,
+                s.data->>'STATUS'                          AS status,
+                (s.data->>'_status_entered_at')::TIMESTAMPTZ AS status_entered_at,
+                s.data->'_status_history'                 AS status_history,
+                s.data->>'CLIENT_CONTACT_NAME'             AS client_contact_name,
+                s.data->>'PREVIOUS_AGREEMENT'              AS previous_agreement,
+                s.data->>'eApprovals_Package_ID_253_YYYY'  AS eapprovals_package_id,
+                (s.data->>'START_DATE_YYYY_MM_DD')::DATE   AS start_date,
+                (s.data->>'END_DATE_YYYY_MM_DD')::DATE     AS end_date,
+                (s.data->>'ONE_TIME')::NUMERIC             AS one_time,
+                (s.data->>'ANNUAL')::NUMERIC               AS annual,
+                (s.data->>'MONTHLY_RECURRING')::NUMERIC    AS monthly_recurring,
+                (s.data->>'TOTAL_RECOVERY')::NUMERIC       AS total_recovery,
+                (s.data->>'ACTIVE_CARRY_TO_NEXT_FY')::NUMERIC AS active_carry_to_next_fy,
+                (s.data->>'FISCAL_YEAR_MONTHS')::INTEGER   AS fiscal_year_months,
+                (s.data->>'AGREEMENT_MONTHS_optional')::INTEGER AS agreement_months,
+                s.data->>'MONTH_BILLED'                    AS month_billed,
+                s.data->>'NEXT_FISCAL_RENEWAL'             AS next_fiscal_renewal,
+                s.data->>'SERVICE_OWNER'                   AS service_owner,
+                s.data->>'ITS_SERVICE'                     AS its_service,
+                s.data->>'ITS_SERVICE_TYPE'                AS its_service_type,
+                s.data->>'SOLUTION_CI'                     AS solution_ci,
+                s.data->>'IFIS_CODE'                       AS ifis_code,
+                s.data->>'SERVICE_OWNER_CONTACT_NAME'      AS service_owner_contact_name,
+                s.data->>'COMMENTS'                        AS comments
+            FROM submissions s;
+        """)
+
         # Seed default accounts if users table is empty
         cur.execute("SELECT COUNT(*) FROM users")
         if cur.fetchone()[0] == 0:
             cur.execute(
                 "INSERT INTO users (username, password, role, must_change_password) VALUES (%s, %s, %s, %s), (%s, %s, %s, %s)",
-                ('admin', hash_password('admin123'), 'admin', True,
-                 'user', hash_password('user123'), 'user', True)
+                (
+                    "admin",
+                    hash_password("admin123"),
+                    "admin",
+                    True,
+                    "user",
+                    hash_password("user123"),
+                    "user",
+                    True,
+                ),
             )
 
 
@@ -163,230 +643,973 @@ def ensure_db():
 def enforce_password_change():
     """Redirect users who must change their password to the change-password page."""
     if current_user.is_authenticated and current_user.must_change_password:
-        allowed = ('change_password', 'logout', 'static')
+        allowed = ("change_password", "logout", "auth_login", "auth_callback", "static")
         if request.endpoint not in allowed:
-            flash('You must change your password before continuing.', 'warning')
-            return redirect(url_for('change_password'))
+            flash("You must change your password before continuing.", "warning")
+            return redirect(url_for("change_password"))
 
 
 def sanitize_name(s):
-    return re.sub(r"[^0-9A-Za-z]+", '_', s).strip('_')
+    return re.sub(r"[^0-9A-Za-z]+", "_", s).strip("_")
+
+
+def _parse_amount(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.replace("$", "").replace(",", "")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _comments_amount(values):
+    for key in ("TOTAL_RECOVERY", "MONTHLY_RECURRING", "ANNUAL", "ONE_TIME"):
+        amount = _parse_amount((values or {}).get(key, ""))
+        if amount is not None:
+            return f"${amount:,.2f}"
+    return "<$>"
+
+
+def build_comments_text(values=None):
+    values = values or {}
+    cluster = (values.get("SERVICE_OWNER", "") or "").strip() or "<CLUSTER>"
+    amount = _comments_amount(values)
+    return (
+        "Please accept this Recovery Note (RN) as authorization for GovTechON (GTO), "
+        "Infrastructure Technology Operations Division (ITOD) to invoice "
+        f"{cluster}, <MINISTRY> the amount of {amount} under the cost center identified "
+        "for <SPECIFY>.\n\n"
+        "<PROVIDE DETAILS ON THE BUSINESS SOLUTION, RATIONALE, WIA/PROJECT AT A HIGH LEVEL "
+        "AND 2 TO 3 SENTENCES AT THE MOST>"
+    )
+
+
+def _utc_now_iso():
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_status(value):
+    return str(value or "").strip()
+
+
+def _initialize_status_tracking(values):
+    status = _normalize_status((values or {}).get("STATUS"))
+    if not status:
+        return
+    now = _utc_now_iso()
+    values["_status_entered_at"] = now
+    values["_status_history"] = [
+        {
+            "status": status,
+            "changed_at": now,
+            "changed_by": _current_submission_author(),
+        }
+    ]
+
+
+def _apply_status_tracking(existing_values, updated_values):
+    existing_values = existing_values or {}
+
+    old_status = _normalize_status(existing_values.get("STATUS"))
+    new_status = _normalize_status(updated_values.get("STATUS"))
+
+    existing_history = existing_values.get("_status_history", [])
+    history = []
+    if isinstance(existing_history, list):
+        for item in existing_history:
+            if not isinstance(item, dict):
+                continue
+            item_status = _normalize_status(item.get("status"))
+            if not item_status:
+                continue
+            history.append(
+                {
+                    "status": item_status,
+                    "changed_at": str(item.get("changed_at") or "").strip(),
+                    "changed_by": str(item.get("changed_by") or "").strip(),
+                }
+            )
+
+    existing_entered_at = str(existing_values.get("_status_entered_at") or "").strip()
+
+    if not new_status:
+        if existing_entered_at:
+            updated_values["_status_entered_at"] = existing_entered_at
+        if history:
+            updated_values["_status_history"] = history
+        return
+
+    if old_status == new_status:
+        if existing_entered_at:
+            updated_values["_status_entered_at"] = existing_entered_at
+        else:
+            # Backfill for legacy rows where entered-at was never captured.
+            for item in reversed(history):
+                if item.get("status") == new_status and item.get("changed_at"):
+                    updated_values["_status_entered_at"] = item["changed_at"]
+                    break
+        if history:
+            updated_values["_status_history"] = history
+        return
+
+    now = _utc_now_iso()
+    updated_values["_status_entered_at"] = now
+    history.append(
+        {
+            "status": new_status,
+            "changed_at": now,
+            "changed_by": _current_submission_author(),
+        }
+    )
+    updated_values["_status_history"] = history
+
+
+def save_attachments(submission_id, files, existing=None):
+    """Save uploaded files under uploads/<submission_id>/ and return metadata list."""
+    existing = existing or []
+    if not files:
+        return existing
+
+    target_dir = _submission_upload_dir(submission_id)
+    os.makedirs(target_dir, exist_ok=True)
+
+    out = list(existing)
+    existing_names = {x.get("stored", "") for x in out}
+    for f in files:
+        if not f or not getattr(f, "filename", ""):
+            continue
+        original = f.filename
+        base = secure_filename(original)
+        if not base:
+            continue
+
+        stem, ext = os.path.splitext(base)
+        candidate = base
+        n = 1
+        candidate_path = safe_join(target_dir, candidate)
+        while candidate in existing_names or (
+            candidate_path and os.path.exists(candidate_path)
+        ):
+            candidate = f"{stem}_{n}{ext}"
+            candidate_path = safe_join(target_dir, candidate)
+            n += 1
+
+        if not candidate_path:
+            continue
+        f.save(candidate_path)
+        existing_names.add(candidate)
+        out.append({"name": original, "stored": candidate})
+
+    return out
+
+
+def _norm_label(s):
+    return re.sub(r"\s+", " ", (s or "").replace("\n", " ")).strip()
+
+
+def read_lookup_config():
+    """Load lookup values and metadata from field_lookups.json."""
+    raw = {}
+    if os.path.exists(LOOKUP_PATH):
+        with open(LOOKUP_PATH, "r", encoding="utf-8") as lf:
+            raw = json.load(lf)
+
+    cascade_field_map = {
+        _norm_label(k): _norm_label(v)
+        for k, v in (raw.get("_cascade_fields", {}) or {}).items()
+    }
+
+    inactive_map = {}
+    for key, vals in (raw.get("_inactive", {}) or {}).items():
+        nk = _norm_label(key)
+        if not isinstance(vals, list):
+            continue
+        inactive_map[nk] = [_norm_label(v) for v in vals if _norm_label(v)]
+
+    lookups = {}
+    for key, value in raw.items():
+        if key.startswith("_"):
+            continue
+        lookups[_norm_label(key)] = value
+
+    return lookups, cascade_field_map, inactive_map
+
+
+def write_lookup_config(lookups, cascade_field_map, inactive_map):
+    payload = {}
+    for key in sorted(lookups.keys()):
+        payload[key] = lookups[key]
+    if cascade_field_map:
+        payload["_cascade_fields"] = cascade_field_map
+
+    cleaned_inactive = {}
+    for key, vals in inactive_map.items():
+        uniq = sorted({_norm_label(v) for v in vals if _norm_label(v)})
+        if uniq:
+            cleaned_inactive[_norm_label(key)] = uniq
+    if cleaned_inactive:
+        payload["_inactive"] = cleaned_inactive
+
+    with open(LOOKUP_PATH, "w", encoding="utf-8") as lf:
+        json.dump(payload, lf, indent=2, ensure_ascii=False)
+
+
+def _active_lookup_value(lookup_key, lookup_val, inactive_map):
+    if isinstance(lookup_val, list):
+        inactive = set(inactive_map.get(_norm_label(lookup_key), []))
+        return [x for x in lookup_val if _norm_label(x) not in inactive]
+    if isinstance(lookup_val, dict):
+        parent_inactive = set(inactive_map.get(_norm_label(lookup_key), []))
+        out = {}
+        for parent, children in lookup_val.items():
+            if _norm_label(parent) in parent_inactive:
+                continue
+            if isinstance(children, list):
+                child_key = _norm_label(f"{lookup_key}::{parent}")
+                child_inactive = set(inactive_map.get(child_key, []))
+                out[parent] = [
+                    c for c in children if _norm_label(c) not in child_inactive
+                ]
+            else:
+                out[parent] = children
+        return out
+    return lookup_val
+
+
+def _add_lookup_option(lookups, lookup_key, value, cascade_parent=""):
+    lookup_key = _norm_label(lookup_key)
+    value = _norm_label(value)
+    cascade_parent = _norm_label(cascade_parent)
+    if not lookup_key or not value:
+        return False, "Lookup key and value are required."
+
+    current = lookups.get(lookup_key)
+    if cascade_parent:
+        if not isinstance(current, dict):
+            return False, "Selected lookup is not a cascading lookup."
+        children = current.get(cascade_parent)
+        if children is None:
+            current[cascade_parent] = []
+            children = current[cascade_parent]
+        if not isinstance(children, list):
+            return False, "Cascade parent does not contain a list of options."
+        if value not in children:
+            children.append(value)
+        return True, "Option added."
+
+    if current is None:
+        lookups[lookup_key] = [value]
+        return True, "Option added."
+    if not isinstance(current, list):
+        return False, "Selected lookup is not a simple list."
+    if value not in current:
+        current.append(value)
+    return True, "Option added."
+
+
+def _toggle_lookup_option(
+    inactive_map, lookup_key, value, cascade_parent="", hide=True
+):
+    lookup_key = _norm_label(lookup_key)
+    value = _norm_label(value)
+    cascade_parent = _norm_label(cascade_parent)
+    if not lookup_key or not value:
+        return False, "Lookup key and value are required."
+
+    state_key = (
+        _norm_label(f"{lookup_key}::{cascade_parent}") if cascade_parent else lookup_key
+    )
+    state = set(inactive_map.get(state_key, []))
+    if hide:
+        state.add(value)
+    else:
+        state.discard(value)
+    if state:
+        inactive_map[state_key] = sorted(state)
+    elif state_key in inactive_map:
+        del inactive_map[state_key]
+    return True, "Option updated."
+
+
+COPY_REMOVE_FIELDS = ("AGREEMENT_ID", "_created_at", "_attachments", "_upload_id")
+DEFAULT_COPY_CLEAR_FIELDS = {
+    "END_DATE_YYYY_MM_DD",
+    "TERMINATION_DATE_YYYY_MM_DD",
+    "TERMINATION_REASON",
+    "TERMINATION_NOTES",
+    "CLOSURE_DATE_YYYY_MM_DD",
+    "CLOSURE_REASON",
+    "CLOSURE_NOTES",
+    "CLOSED_DATE_YYYY_MM_DD",
+    "CLOSE_DATE_YYYY_MM_DD",
+    "CLOSE_REASON",
+    "CLOSE_NOTES",
+    "EXPIRY_DATE_YYYY_MM_DD",
+    "EXPIRED_DATE_YYYY_MM_DD",
+    "EXPIRY_REASON",
+    "EXPIRY_NOTES",
+}
+
+
+def get_copy_clear_fields():
+    """Resolve copy-clear field names from field_groups.json when configured."""
+    try:
+        with open(FG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return set(DEFAULT_COPY_CLEAR_FIELDS)
+
+    if "copy_clear_fields" not in data:
+        return set(DEFAULT_COPY_CLEAR_FIELDS)
+
+    configured = data.get("copy_clear_fields")
+    if not isinstance(configured, list):
+        return set(DEFAULT_COPY_CLEAR_FIELDS)
+
+    out = set()
+    for field in configured:
+        text = str(field or "").strip()
+        if not text:
+            continue
+        out.add(text)
+        out.add(sanitize_name(text))
+    return out
+
+
+def prepare_copy_values(source_values):
+    """Prepare values for a copied agreement as a new draft submission."""
+    copied = dict(source_values or {})
+    source_agreement_id = (copied.get("AGREEMENT_ID") or "").strip()
+
+    for key in COPY_REMOVE_FIELDS:
+        copied.pop(key, None)
+
+    copied["STATUS"] = "Draft"
+    if source_agreement_id:
+        copied["PREVIOUS_AGREEMENT"] = source_agreement_id
+
+    for key in get_copy_clear_fields():
+        if key in copied:
+            copied[key] = ""
+
+    return copied
 
 
 def load_field_groups():
-    with open(FG_PATH, 'r', encoding='utf-8') as f:
+    with open(FG_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
-    groups = data.get('groups', {})
-    mandatory = set(data.get('proposed_mandatory', []))
-    field_hints = data.get('field_hints', {})
-    # load lookups and mapping if present
-    lookups = {}
-    cascade_field_map = {}  # { dependent_label: parent_label }
-    if os.path.exists(LOOKUP_PATH):
-        with open(LOOKUP_PATH, 'r', encoding='utf-8') as lf:
-            raw = json.load(lf)
-            cascade_field_map = raw.pop('_cascade_fields', {})
-            for k, v in raw.items():
-                nk = k.replace('\n', ' ').strip()
-                lookups[nk] = v
+    groups = data.get("groups", {})
+    mandatory = set(data.get("proposed_mandatory", []))
+    field_hints = data.get("field_hints", {})
+
+    field_hints_norm = {_norm_label(k): v for k, v in field_hints.items()}
+    lookups, cascade_field_map, inactive_map = read_lookup_config()
     mapping = {}
     if os.path.exists(LOOKUP_MAP):
         try:
-            with open(LOOKUP_MAP, 'r', encoding='utf-8') as mf:
-                mapping = json.load(mf)
+            with open(LOOKUP_MAP, "r", encoding="utf-8") as mf:
+                raw_mapping = json.load(mf)
+                mapping = {
+                    _norm_label(k): _norm_label(v) for k, v in raw_mapping.items()
+                }
         except Exception:
             mapping = {}
     # normalize groups into list of (group_name, [ {label,name,required,...} ])
     out = []
+    month_field_sources = {
+        "FISCAL YEAR # MONTHS": {
+            "primary": "# FISCAL MONTHS",
+            "fallback": "# FISCAL MONTHS",
+            "cap": 12,
+        },
+        "AGREEMENT # MONTHS (optional)": {
+            "primary": "# AGREEMENT MONTHS",
+            "fallback": "# FISCAL MONTHS",
+            "cap": None,
+        },
+    }
     for gname, fields in groups.items():
         items = []
         for h in fields:
             if not h:
                 continue
-            label = h.replace('\n', ' ')
+            label = _norm_label(h)
             mapped_key = mapping.get(label)
+            resolved_lookup_key = mapped_key or label
+            if not mapped_key and label in month_field_sources:
+                source_cfg = month_field_sources[label]
+                primary_key = source_cfg["primary"]
+                fallback_key = source_cfg.get("fallback")
+                if primary_key in lookups:
+                    resolved_lookup_key = primary_key
+                elif fallback_key and fallback_key in lookups:
+                    resolved_lookup_key = fallback_key
             options = None
             cascade_data = None
             parent_label = cascade_field_map.get(label)
             cascade_from = sanitize_name(parent_label) if parent_label else None
-            if mapped_key:
-                lookup_val = lookups.get(mapped_key)
-            else:
-                lookup_val = lookups.get(label)
+            lookup_val = lookups.get(resolved_lookup_key)
             if cascade_from:
                 # This is a cascade child — get cascade data from parent's lookup
                 parent_mapped = mapping.get(parent_label)
-                parent_lookup = lookups.get(parent_mapped) if parent_mapped else lookups.get(parent_label)
+                parent_lookup_key = parent_mapped or parent_label
+                parent_lookup = (
+                    lookups.get(parent_mapped)
+                    if parent_mapped
+                    else lookups.get(parent_label)
+                )
                 if isinstance(parent_lookup, dict):
-                    cascade_data = parent_lookup
+                    cascade_data = _active_lookup_value(
+                        parent_lookup_key, parent_lookup, inactive_map
+                    )
                     options = []  # options populated dynamically via JS
             elif isinstance(lookup_val, dict):
                 # This is a cascade parent — show top-level keys as options
-                options = list(lookup_val.keys())
+                options = list(
+                    _active_lookup_value(
+                        resolved_lookup_key, lookup_val, inactive_map
+                    ).keys()
+                )
             else:
-                options = lookup_val
+                options = _active_lookup_value(
+                    resolved_lookup_key, lookup_val, inactive_map
+                )
             if isinstance(options, list):
+
                 def _fix_govtech(s):
-                    if 'GovTech ON - Cyber Security' in s and '(CSD)' not in s:
-                        return s.replace('GovTech ON - Cyber Security', 'GovTech ON - Cyber Security (CSD)')
-                    if 'GovTech ON - Technology Policy & Standards Development' in s and '(TPSD)' not in s:
-                        return s.replace('GovTech ON - Technology Policy & Standards Development', 'GovTech ON - Technology Policy & Standards Development (TPSD)')
+                    if "GovTech ON - Cyber Security" in s and "(CSD)" not in s:
+                        return s.replace(
+                            "GovTech ON - Cyber Security",
+                            "GovTech ON - Cyber Security (CSD)",
+                        )
+                    if (
+                        "GovTech ON - Technology Policy & Standards Development" in s
+                        and "(TPSD)" not in s
+                    ):
+                        return s.replace(
+                            "GovTech ON - Technology Policy & Standards Development",
+                            "GovTech ON - Technology Policy & Standards Development (TPSD)",
+                        )
                     return s
+
                 options = [_fix_govtech(x) for x in options]
-            hint_data = field_hints.get(label, {})
-            items.append({
-                'label': hint_data.get('display_label', label),
-                'name': sanitize_name(h),
-                'required': h in mandatory,
-                'options': options,
-                'cascade_data': cascade_data,
-                'cascade_from': cascade_from,
-                'placeholder': hint_data.get('placeholder', ''),
-                'hint': hint_data.get('hint', ''),
-                'compound': hint_data.get('compound', ''),
-                'input_type': hint_data.get('input_type', 'text'),
-                'input_min': hint_data.get('min', ''),
-                'input_max': hint_data.get('max', ''),
-                'input_step': hint_data.get('step', ''),
-                'input_mask': hint_data.get('input_mask', ''),
-            })
+            hint_data = field_hints.get(label) or field_hints_norm.get(
+                _norm_label(label), {}
+            )
+            input_type = hint_data.get("input_type", "text")
+            input_min = hint_data.get("min", "")
+            input_max = hint_data.get("max", "")
+            placeholder = hint_data.get("placeholder", "")
+
+            # For month count inputs, keep max aligned with numeric lookup values.
+            if input_type == "number" and isinstance(lookup_val, list):
+                numeric_vals = []
+                for raw in lookup_val:
+                    text = str(raw or "").strip()
+                    if not text or not re.fullmatch(r"-?\d+", text):
+                        numeric_vals = []
+                        break
+                    numeric_vals.append(int(text))
+                if numeric_vals:
+                    derived_max = max(numeric_vals)
+                    if label in month_field_sources:
+                        cap = month_field_sources[label].get("cap")
+                        if isinstance(cap, int) and cap > 0:
+                            derived_max = min(derived_max, cap)
+                    if derived_max > 0:
+                        input_max = str(derived_max)
+                        min_text = str(input_min).strip() or "1"
+                        placeholder = f"{min_text} - {input_max}"
+
+            items.append(
+                {
+                    "label": hint_data.get("display_label", label),
+                    "source_label": label,
+                    "name": sanitize_name(h),
+                    "required": h in mandatory,
+                    "options": options,
+                    "cascade_data": cascade_data,
+                    "cascade_from": cascade_from,
+                    "placeholder": placeholder,
+                    "hint": hint_data.get("hint", ""),
+                    "compound": hint_data.get("compound", ""),
+                    "input_type": input_type,
+                    "input_min": input_min,
+                    "input_max": input_max,
+                    "input_step": hint_data.get("step", ""),
+                    "input_mask": hint_data.get("input_mask", ""),
+                }
+            )
         if items:
             out.append((gname, items))
     return out
 
 
-@app.route('/map-lookups', methods=['GET', 'POST'])
+@app.route("/export/csv")
+@admin_required
+def export_csv():
+    """Download all submissions as a flat CSV file (admin only)."""
+    groups = load_field_groups()
+    field_names = [it["name"] for _, items in groups for it in items]
+    headers = [
+        "id",
+        "created_at",
+        *field_names,
+        "current_status_entered_at",
+        "status_history_json",
+        "status_transition_path",
+        "days_in_current_status",
+    ]
+
+    with db_cursor() as cur:
+        cur.execute("SELECT id, created_at, data FROM submissions ORDER BY id")
+        rows = cur.fetchall()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(headers)
+    for row_id, created_at, data in rows:
+        d = data if isinstance(data, dict) else json.loads(data)
+
+        status_entered_at = str(d.get("_status_entered_at") or "").strip()
+        status_history = d.get("_status_history")
+        exported_history = []
+        if isinstance(status_history, list):
+            for item in status_history:
+                if not isinstance(item, dict):
+                    continue
+                item_status = str(item.get("status") or "").strip()
+                if not item_status:
+                    continue
+                exported_history.append(
+                    {
+                        "status": item_status,
+                        "changed_at": str(item.get("changed_at") or "").strip(),
+                    }
+                )
+
+        status_history_json = (
+            json.dumps(exported_history, ensure_ascii=False) if exported_history else ""
+        )
+        status_transition_path = " -> ".join(
+            [item["status"] for item in exported_history]
+        )
+
+        days_in_current_status = ""
+        if status_entered_at:
+            try:
+                entered = datetime.fromisoformat(status_entered_at.replace("Z", "+00:00"))
+                if entered.tzinfo is None:
+                    entered = entered.replace(tzinfo=UTC)
+                days = (datetime.now(UTC) - entered.astimezone(UTC)).days
+                days_in_current_status = str(max(days, 0))
+            except Exception:
+                days_in_current_status = ""
+
+        writer.writerow(
+            [row_id, created_at]
+            + [d.get(f, "") for f in field_names]
+            + [
+                status_entered_at,
+                status_history_json,
+                status_transition_path,
+                days_in_current_status,
+            ]
+        )
+
+    response = make_response(buf.getvalue())
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.headers["Content-Disposition"] = (
+        "attachment; filename=submissions_export.csv"
+    )
+    return response
+
+
+@app.route("/map-lookups", methods=["GET", "POST"])
 @admin_required
 def map_lookups():
-    groups = load_field_groups()
-    labels = []
-    for g, items in groups:
-        for it in items:
-            labels.append(it['label'])
+    lookups, cascade_map, inactive_map = read_lookup_config()
+    field_usage = {}
 
-    lookups = {}
-    if os.path.exists(LOOKUP_PATH):
-        with open(LOOKUP_PATH, 'r', encoding='utf-8') as lf:
-            raw = json.load(lf)
-            lookups = {k.replace('\n', ' ').strip(): v for k, v in raw.items()}
+    try:
+        with open(FG_PATH, "r", encoding="utf-8") as f:
+            groups_data = json.load(f).get("groups", {})
+    except Exception:
+        groups_data = {}
 
     mapping = {}
     if os.path.exists(LOOKUP_MAP):
-        with open(LOOKUP_MAP, 'r', encoding='utf-8') as mf:
-            try:
-                mapping = json.load(mf)
-            except Exception:
-                mapping = {}
+        try:
+            with open(LOOKUP_MAP, "r", encoding="utf-8") as mf:
+                raw_mapping = json.load(mf)
+                mapping = {
+                    _norm_label(k): _norm_label(v) for k, v in raw_mapping.items()
+                }
+        except Exception:
+            mapping = {}
 
-    if request.method == 'POST':
-        newmap = {}
-        for form_key, sel in request.form.items():
-            if not sel:
+    for fields in groups_data.values():
+        if not isinstance(fields, list):
+            continue
+        for label in fields:
+            nlabel = _norm_label(label)
+            if not nlabel:
                 continue
-            for label in labels:
-                if sanitize_name(label) == form_key:
-                    newmap[label] = sel
-                    break
-        with open(LOOKUP_MAP, 'w', encoding='utf-8') as mf:
-            json.dump(newmap, mf, indent=2, ensure_ascii=False)
-        flash('Lookup mappings saved.', 'success')
-        return redirect(url_for('map_lookups'))
+            resolved_lookup = mapping.get(nlabel, nlabel)
+            field_usage.setdefault(resolved_lookup, set()).add(nlabel)
 
-    return render_template('map_lookups.html', labels=labels, lookups=list(lookups.keys()), mapping=mapping)
+    for child_label, parent_label in cascade_map.items():
+        parent = _norm_label(parent_label)
+        child = _norm_label(child_label)
+        if not parent or not child:
+            continue
+        parent_lookup = mapping.get(parent, parent)
+        field_usage.setdefault(parent_lookup, set()).add(child)
+
+    if request.method == "POST":
+        action = request.form.get("_action", "")
+
+        lookup_key = request.form.get("lookup_key", "")
+        lookup_value = request.form.get("lookup_value", "")
+        cascade_parent = request.form.get("cascade_parent", "")
+
+        if action == "lookup_add":
+            ok, msg = _add_lookup_option(
+                lookups, lookup_key, lookup_value, cascade_parent
+            )
+            if ok:
+                _toggle_lookup_option(
+                    inactive_map,
+                    lookup_key,
+                    lookup_value,
+                    cascade_parent=cascade_parent,
+                    hide=False,
+                )
+                write_lookup_config(lookups, cascade_map, inactive_map)
+                flash(msg, "success")
+            else:
+                flash(msg, "danger")
+            return redirect(url_for("map_lookups"))
+
+        if action in ("lookup_hide", "lookup_unhide"):
+            ok, msg = _toggle_lookup_option(
+                inactive_map,
+                lookup_key,
+                lookup_value,
+                cascade_parent=cascade_parent,
+                hide=(action == "lookup_hide"),
+            )
+            if ok:
+                write_lookup_config(lookups, cascade_map, inactive_map)
+                flash(msg, "success")
+            else:
+                flash(msg, "danger")
+            return redirect(url_for("map_lookups"))
+
+        flash("Unknown lookup action.", "danger")
+        return redirect(url_for("map_lookups"))
+
+    lookup_items = []
+    for key in sorted(lookups.keys()):
+        value = lookups[key]
+        if isinstance(value, list):
+            inactive = set(inactive_map.get(_norm_label(key), []))
+            options = [
+                {"value": v, "active": _norm_label(v) not in inactive} for v in value
+            ]
+            lookup_items.append(
+                {
+                    "key": key,
+                    "kind": "list",
+                    "options": options,
+                    "parents": [],
+                    "used_by": sorted(field_usage.get(key, set())),
+                }
+            )
+        elif isinstance(value, dict):
+            parent_inactive = set(inactive_map.get(_norm_label(key), []))
+            parents = []
+            for parent_name, children in value.items():
+                child_state_key = _norm_label(f"{key}::{parent_name}")
+                child_inactive = set(inactive_map.get(child_state_key, []))
+                child_options = []
+                if isinstance(children, list):
+                    child_options = [
+                        {
+                            "value": c,
+                            "active": _norm_label(c) not in child_inactive,
+                        }
+                        for c in children
+                    ]
+                parents.append(
+                    {
+                        "name": parent_name,
+                        "active": _norm_label(parent_name) not in parent_inactive,
+                        "children": child_options,
+                    }
+                )
+            lookup_items.append(
+                {
+                    "key": key,
+                    "kind": "cascade",
+                    "options": [],
+                    "parents": parents,
+                    "used_by": sorted(field_usage.get(key, set())),
+                }
+            )
+
+    return render_template(
+        "map_lookups.html",
+        lookup_items=lookup_items,
+    )
 
 
 # ── Authentication routes ────────────────────────────────────────────────────
 
-@app.route('/login', methods=['GET', 'POST'])
+
+@app.route("/login", methods=["GET"])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for('track'))
-    if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '')
+        return redirect(url_for("track"))
+    return render_template("login.html", sso_enabled=_sso_enabled())
+
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if current_user.is_authenticated:
+        return redirect(url_for("track"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
         try:
             with db_cursor() as cur:
                 cur.execute(
-                    "SELECT id, username, password, role FROM users WHERE username = %s",
-                    (username,)
+                    "SELECT id, username, password, role, must_change_password FROM users WHERE username = %s",
+                    (username,),
                 )
                 row = cur.fetchone()
-        except Exception:
-            row = None
-        if row and row[2] == hash_password(password):
-            user = User(row[0], row[1], row[3])
+        except Exception as e:
+            print(f"ERROR: Login failed due to database error: {e}", file=sys.stderr)
+            flash(
+                "Login is temporarily unavailable. Please verify your database connection.",
+                "danger",
+            )
+            return render_template("admin_login.html")
+
+        if row and verify_password(row[2], password):
+            if _is_legacy_sha256_hash(row[2]):
+                try:
+                    with db_cursor() as cur:
+                        cur.execute(
+                            "UPDATE users SET password = %s WHERE id = %s",
+                            (hash_password(password), row[0]),
+                        )
+                except Exception:
+                    # Keep login flow working even if opportunistic hash upgrade fails.
+                    pass
+
+            user = User(row[0], row[1], row[3], bool(row[4]))
             login_user(user)
-            # Check if user must change password
-            try:
-                with db_cursor() as cur2:
-                    cur2.execute("SELECT must_change_password FROM users WHERE id = %s", (user.id,))
-                    mcp = cur2.fetchone()
-                if mcp and mcp[0]:
-                    return redirect(url_for('change_password'))
-            except Exception:
-                pass
-            next_page = request.args.get('next')
-            return redirect(next_page or url_for('track'))
-        flash('Invalid username or password.', 'danger')
-    return render_template('login.html')
+            if user.must_change_password:
+                return redirect(url_for("change_password"))
+
+            next_page = request.form.get("next") or request.args.get("next")
+            if next_page and _is_safe_redirect_target(next_page):
+                return redirect(next_page)
+            return redirect(url_for("track"))
+
+        flash("Invalid username or password.", "danger")
+
+    return render_template("admin_login.html")
 
 
-@app.route('/change-password', methods=['GET', 'POST'])
+@app.route("/auth/login", methods=["GET"])
+def auth_login():
+    if current_user.is_authenticated:
+        return redirect(url_for("track"))
+
+    client = _get_entra_client()
+    if client is None:
+        flash("Microsoft sign-in is not configured for this environment.", "warning")
+        return redirect(url_for("admin_login"))
+
+    next_page = request.args.get("next")
+    if next_page and _is_safe_redirect_target(next_page):
+        session["post_auth_next"] = next_page
+
+    try:
+        return client.authorize_redirect(_entra_redirect_uri())
+    except Exception as e:
+        print(f"ERROR: Could not start Microsoft sign-in flow: {e}", file=sys.stderr)
+        flash("Microsoft sign-in is temporarily unavailable.", "danger")
+        return redirect(url_for("login"))
+
+
+@app.route("/auth/callback", methods=["GET"])
+def auth_callback():
+    if current_user.is_authenticated:
+        return redirect(url_for("track"))
+
+    error = request.args.get("error")
+    if error:
+        description = request.args.get("error_description", "")
+        flash(f"Microsoft sign-in failed: {error} {description}".strip(), "danger")
+        return redirect(url_for("login"))
+
+    client = _get_entra_client()
+    if client is None:
+        flash("Microsoft sign-in is not configured for this environment.", "warning")
+        return redirect(url_for("login"))
+
+    try:
+        token = client.authorize_access_token()
+        id_claims = {}
+        try:
+            id_claims = client.parse_id_token(token) or {}
+        except Exception as parse_err:
+            # Some providers/flows may not return a parseable id_token on every path.
+            # Continue with userinfo claims if available.
+            print(
+                f"WARNING: Could not parse ID token claims: {parse_err}",
+                file=sys.stderr,
+            )
+        userinfo_claims = token.get("userinfo") or {}
+        # Entra group membership is commonly emitted in ID token claims.
+        # Merge userinfo for profile fields, but preserve ID-token group claims.
+        claims = dict(id_claims)
+        claims.update(userinfo_claims)
+        if "groups" in id_claims:
+            claims["groups"] = id_claims.get("groups")
+        # In some Entra flows, groups may be emitted in access_token claims.
+        if "groups" not in claims:
+            at_claims = _claims_from_jwt_unverified(token.get("access_token", ""))
+            if "groups" in at_claims:
+                claims["groups"] = at_claims.get("groups")
+        if not claims:
+            raise PermissionError("Microsoft sign-in returned no usable identity claims.")
+        session_author = _resolve_entra_username(claims) or _resolve_entra_display_name(
+            claims
+        )
+        if session_author:
+            session["entra_author"] = session_author
+        user = _get_or_create_entra_user(claims or {}, token.get("access_token", ""))
+    except PermissionError as e:
+        flash(str(e), "danger")
+        return redirect(url_for("login"))
+    except Exception as e:
+        print(f"ERROR: Microsoft callback processing failed: {e}", file=sys.stderr)
+        flash("Microsoft sign-in could not be completed.", "danger")
+        return redirect(url_for("login"))
+
+    login_user(user)
+    next_page = session.pop("post_auth_next", None)
+    if next_page and _is_safe_redirect_target(next_page):
+        return redirect(next_page)
+    return redirect(url_for("track"))
+
+
+@app.route("/change-password", methods=["GET", "POST"])
 @login_required
 def change_password():
-    if request.method == 'POST':
-        new_pw = request.form.get('new_password', '').strip()
-        confirm_pw = request.form.get('confirm_password', '').strip()
+    if request.method == "POST":
+        new_pw = request.form.get("new_password", "").strip()
+        confirm_pw = request.form.get("confirm_password", "").strip()
         if not new_pw or len(new_pw) < 6:
-            flash('Password must be at least 6 characters.', 'danger')
-            return render_template('change_password.html')
+            flash("Password must be at least 6 characters.", "danger")
+            return render_template("change_password.html")
         if new_pw != confirm_pw:
-            flash('Passwords do not match.', 'danger')
-            return render_template('change_password.html')
+            flash("Passwords do not match.", "danger")
+            return render_template("change_password.html")
         try:
             with db_cursor() as cur:
                 cur.execute(
                     "UPDATE users SET password = %s, must_change_password = FALSE WHERE id = %s",
-                    (hash_password(new_pw), current_user.id)
+                    (hash_password(new_pw), current_user.id),
                 )
-            flash('Password changed successfully.', 'success')
-            return redirect(url_for('track'))
+            flash("Password changed successfully.", "success")
+            return redirect(url_for("track"))
         except Exception:
-            flash('Could not update password.', 'danger')
-    return render_template('change_password.html')
+            flash("Could not update password.", "danger")
+    return render_template("change_password.html")
 
 
-@app.route('/logout')
+@app.route("/logout")
 @login_required
 def logout():
+    session.pop("post_auth_next", None)
+    session.pop("entra_author", None)
     logout_user()
-    flash('Logged out.', 'info')
-    return redirect(url_for('login'))
+    flash("Logged out.", "info")
+    return redirect(url_for("login"))
 
 
 # ── Application routes ───────────────────────────────────────────────────────
 
-@app.route('/', methods=['GET'])
+
+@app.route("/", methods=["GET"])
 @login_required
 def form():
     groups = load_field_groups()
-    return render_template('form.html', groups=groups, values={}, edit_index=None)
+    values = {
+        "COMMENTS": build_comments_text({}),
+        "AGREEMENT_AUTHOR": _current_submission_author(),
+    }
+    copy_from = request.args.get("copy_from", type=int)
+    if copy_from is not None:
+        with db_cursor() as cur:
+            cur.execute("SELECT data FROM submissions WHERE id = %s", (copy_from,))
+            row = cur.fetchone()
+        if row is None:
+            flash("Source submission for copy was not found.", "danger")
+            return redirect(url_for("track"))
+        source_values = dict(row[0]) if isinstance(row[0], dict) else {}
+        values = prepare_copy_values(source_values)
+        values["AGREEMENT_AUTHOR"] = _current_submission_author()
+        if not (values.get("COMMENTS") or "").strip():
+            values["COMMENTS"] = build_comments_text(values)
+        flash("Copy loaded. Update the new Agreement ID before saving.", "info")
+    return render_template(
+        "form.html", groups=groups, values=values, edit_index=None, attachments=[]
+    )
 
 
-@app.route('/edit/<int:id>', methods=['GET'])
+@app.route("/copy/<int:id>", methods=["GET"])
+@login_required
+def copy_submission(id):
+    return redirect(url_for("form", copy_from=id))
+
+
+@app.route("/edit/<int:id>", methods=["GET"])
 @login_required
 def edit(id):
     with db_cursor() as cur:
         cur.execute("SELECT data FROM submissions WHERE id = %s", (id,))
         row = cur.fetchone()
     if row is None:
-        flash('Submission not found.', 'danger')
-        return redirect(url_for('track'))
+        flash("Submission not found.", "danger")
+        return redirect(url_for("track"))
     groups = load_field_groups()
-    return render_template('form.html', groups=groups, values=row[0], edit_index=id)
+    values = dict(row[0]) if isinstance(row[0], dict) else {}
+    if not (values.get("COMMENTS") or "").strip():
+        values["COMMENTS"] = build_comments_text(values)
+    attachments = values.get("_attachments", [])
+    return render_template(
+        "form.html",
+        groups=groups,
+        values=values,
+        edit_index=id,
+        attachments=attachments,
+    )
 
 
-@app.route('/submit', methods=['POST'])
+@app.route("/submit", methods=["POST"])
 @login_required
 def submit():
     groups = load_field_groups()
@@ -394,63 +1617,101 @@ def submit():
     values = {}
     for gname, items in groups:
         for it in items:
-            v = request.form.get(it['name'], '').strip()
-            values[it['name']] = v
-            if it['required'] and v == '':
-                missing.append(it['label'])
+            if it["name"] == "AGREEMENT_AUTHOR":
+                v = _current_submission_author()
+            else:
+                v = request.form.get(it["name"], "").strip()
+            values[it["name"]] = v
+            if it["required"] and v == "":
+                missing.append(it["label"])
 
     if missing:
-        flash('Missing required fields: ' + ', '.join(missing), 'danger')
-        return redirect(url_for('form'))
+        flash("Missing required fields: " + ", ".join(missing), "danger")
+        return redirect(url_for("form"))
 
-    values['_created_at'] = date.today().isoformat()
+    if not (values.get("COMMENTS") or "").strip():
+        values["COMMENTS"] = build_comments_text(values)
+
+    _initialize_status_tracking(values)
+
+    values["_created_at"] = date.today().isoformat()
     with db_cursor() as cur:
         cur.execute(
             "INSERT INTO submissions (data, created_at) VALUES (%s, %s) RETURNING id",
-            (json.dumps(values), date.today())
+            (json.dumps(values), date.today()),
         )
         new_id = cur.fetchone()[0]
 
-    if request.form.get('_action') == 'save_and_generate':
-        flash('Submission saved.', 'success')
-        return redirect(url_for('generate', id=new_id))
+    # Optional attachments: save files and persist metadata on the submission.
+    attachments = save_attachments(new_id, request.files.getlist("attachments"))
+    if attachments:
+        values["_attachments"] = attachments
+        with db_cursor() as cur:
+            cur.execute(
+                "UPDATE submissions SET data = %s WHERE id = %s",
+                (json.dumps(values), new_id),
+            )
 
-    flash('Submission saved.', 'success')
-    return redirect(url_for('track'))
+    if request.form.get("_action") == "save_and_generate":
+        flash("Submission saved.", "success")
+        return redirect(url_for("generate", id=new_id))
+
+    flash("Submission saved.", "success")
+    return redirect(url_for("track"))
 
 
-@app.route('/update/<int:id>', methods=['POST'])
+@app.route("/update/<int:id>", methods=["POST"])
 @login_required
 def update(id):
     with db_cursor() as cur:
         cur.execute("SELECT data FROM submissions WHERE id = %s", (id,))
         row = cur.fetchone()
     if row is None:
-        flash('Submission not found.', 'danger')
-        return redirect(url_for('track'))
+        flash("Submission not found.", "danger")
+        return redirect(url_for("track"))
     groups = load_field_groups()
+    original_author = row[0].get("AGREEMENT_AUTHOR") or _current_submission_author()
     missing = []
     values = {}
     for gname, items in groups:
         for it in items:
-            v = request.form.get(it['name'], '').strip()
-            values[it['name']] = v
-            if it['required'] and v == '':
-                missing.append(it['label'])
+            if it["name"] == "AGREEMENT_AUTHOR":
+                v = original_author
+            else:
+                v = request.form.get(it["name"], "").strip()
+            values[it["name"]] = v
+            if it["required"] and v == "":
+                missing.append(it["label"])
     if missing:
-        flash('Missing required fields: ' + ', '.join(missing), 'danger')
-        return render_template('form.html', groups=groups, values=values, edit_index=id)
-    values['_created_at'] = row[0].get('_created_at', date.today().isoformat())
+        flash("Missing required fields: " + ", ".join(missing), "danger")
+        return render_template(
+            "form.html",
+            groups=groups,
+            values=values,
+            edit_index=id,
+            attachments=row[0].get("_attachments", []),
+        )
+
+    if not (values.get("COMMENTS") or "").strip():
+        values["COMMENTS"] = build_comments_text(values)
+    values["_created_at"] = row[0].get("_created_at", date.today().isoformat())
+    _apply_status_tracking(row[0], values)
+    attachments = save_attachments(
+        id,
+        request.files.getlist("attachments"),
+        existing=row[0].get("_attachments", []),
+    )
+    if attachments:
+        values["_attachments"] = attachments
     with db_cursor() as cur:
         cur.execute(
-            "UPDATE submissions SET data = %s WHERE id = %s",
-            (json.dumps(values), id)
+            "UPDATE submissions SET data = %s WHERE id = %s", (json.dumps(values), id)
         )
-    flash('Agreement updated.', 'success')
-    return redirect(url_for('track'))
+    flash("Agreement updated.", "success")
+    return redirect(url_for("track"))
 
 
-@app.route('/generate/<int:id>', methods=['GET'])
+@app.route("/generate/<int:id>", methods=["GET"])
 @login_required
 def generate(id):
     """Generate a filled Recovery Note docx for the submission with the given id."""
@@ -458,27 +1719,31 @@ def generate(id):
         cur.execute("SELECT data FROM submissions WHERE id = %s", (id,))
         row = cur.fetchone()
     if row is None:
-        flash('Submission not found.', 'danger')
-        return redirect(url_for('form'))
+        flash("Submission not found.", "danger")
+        return redirect(url_for("form"))
     data = row[0]
     out = generate_docx.generate(data)
-    agreement_id = (data.get('AGREEMENT_ID', 'RecoveryNote') or 'RecoveryNote').replace('/', '-')
+    agreement_id = (data.get("AGREEMENT_ID", "RecoveryNote") or "RecoveryNote").replace(
+        "/", "-"
+    )
     response = send_file(
         out,
         as_attachment=True,
-        download_name=f'{agreement_id}.docx',
-        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        download_name=f"{agreement_id}.docx",
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
+
     @response.call_on_close
     def _cleanup():
         try:
             os.unlink(out)
         except OSError:
             pass
+
     return response
 
 
-@app.route('/generate', methods=['GET'])
+@app.route("/generate", methods=["GET"])
 @login_required
 def generate_latest():
     """Generate the most recent submission."""
@@ -486,120 +1751,281 @@ def generate_latest():
         cur.execute("SELECT id FROM submissions ORDER BY id DESC LIMIT 1")
         row = cur.fetchone()
     if row is None:
-        flash('No submissions found.', 'danger')
-        return redirect(url_for('form'))
-    return redirect(url_for('generate', id=row[0]))
+        flash("No submissions found.", "danger")
+        return redirect(url_for("form"))
+    return redirect(url_for("generate", id=row[0]))
 
 
-@app.route('/submissions', methods=['GET'])
+@app.route("/attachments/<int:id>/<path:filename>", methods=["GET"])
+@login_required
+def download_attachment(id, filename):
+    with db_cursor() as cur:
+        cur.execute("SELECT data FROM submissions WHERE id = %s", (id,))
+        row = cur.fetchone()
+    if row is None:
+        abort(404)
+
+    attachments = row[0].get("_attachments", []) if isinstance(row[0], dict) else []
+    allowed = {a.get("stored") for a in attachments if isinstance(a, dict)}
+    if filename not in allowed:
+        abort(404)
+
+    try:
+        target_dir = _submission_upload_dir(id)
+    except ValueError:
+        abort(404)
+
+    file_path = safe_join(target_dir, filename)
+    if not file_path or not os.path.isfile(file_path):
+        abort(404)
+
+    return send_file(file_path, as_attachment=True, download_name=filename)
+
+
+@app.route("/submissions", methods=["GET"])
 def submissions_api():
     with db_cursor() as cur:
         cur.execute("SELECT id, data FROM submissions ORDER BY id")
         rows = cur.fetchall()
-    return jsonify([{'id': r[0], **r[1]} for r in rows])
+    return jsonify([{"id": r[0], **r[1]} for r in rows])
 
 
-@app.route('/track', methods=['GET'])
+@app.route("/track", methods=["GET"])
 @login_required
 def track():
     with db_cursor() as cur:
         cur.execute("SELECT id, data FROM submissions ORDER BY id")
         rows = cur.fetchall()
-    records = [{'id': r[0], **r[1]} for r in rows]
-    return render_template('track.html', rows=records)
+    records = [{"id": r[0], **r[1]} for r in rows]
+    return render_template("track.html", rows=records)
 
 
-@app.route('/delete/<int:id>', methods=['POST'])
+@app.route("/delete/<int:id>", methods=["POST"])
 @login_required
 def delete(id):
     with db_cursor() as cur:
         cur.execute("DELETE FROM submissions WHERE id = %s RETURNING id", (id,))
         deleted = cur.fetchone()
     if deleted:
-        flash('Record deleted.', 'success')
+        flash("Record deleted.", "success")
     else:
-        flash('Record not found.', 'danger')
-    return redirect(url_for('track'))
+        flash("Record not found.", "danger")
+    return redirect(url_for("track"))
 
 
-@app.route('/api/next-seq', methods=['GET'])
+@app.route("/api/next-seq", methods=["GET"])
 def next_seq():
-    """Return the next available 3-digit sequence for a given ID prefix."""
-    prefix = request.args.get('prefix', '').strip()
-    if not prefix:
-        return jsonify({'seq': 1})
-    field = sanitize_name('AGREEMENT ID')
+    """Return the next available sequence for Agreement ID generation."""
+    cluster_abbr = request.args.get("cluster_abbr", "").strip().upper()
+    cluster_num = request.args.get("cluster_num", "").strip()
+    fy = request.args.get("fy", "").strip()
+    prefix = request.args.get("prefix", "").strip()
+    if not (cluster_abbr and cluster_num and fy) and not prefix:
+        return jsonify({"seq": 1})
+    field = sanitize_name("AGREEMENT ID")
     try:
         with db_cursor() as cur:
             cur.execute(
-                "SELECT data->>%s FROM submissions WHERE data->>%s LIKE %s",
-                (field, field, prefix + '%')
+                "SELECT data->>%s FROM submissions WHERE data->>%s IS NOT NULL",
+                (field, field),
             )
             rows = cur.fetchall()
         existing = []
-        for (val,) in rows:
-            if val and val.startswith(prefix):
-                tail = val[len(prefix):]
-                if tail.isdigit() and len(tail) == 3:
-                    existing.append(int(tail))
+        if cluster_abbr and cluster_num and fy:
+            # Format: <ABBR>-<YYYYMMDD>-RN<CLUSTER_NUM><FY><SEQUENCE>
+            patt = re.compile(
+                rf"^{re.escape(cluster_abbr)}-\d{{8}}-RN{re.escape(cluster_num)}{re.escape(fy)}(\d+)$"
+            )
+            for (val,) in rows:
+                if not val:
+                    continue
+                m = patt.match(val)
+                if m:
+                    existing.append(int(m.group(1)))
+        else:
+            # Backward-compatible path for callers that still use date-based prefix.
+            for (val,) in rows:
+                if val and val.startswith(prefix):
+                    tail = val[len(prefix) :]
+                    if tail.isdigit():
+                        existing.append(int(tail))
     except Exception:
         existing = []
     nxt = (max(existing) + 1) if existing else 1
-    return jsonify({'seq': nxt})
+    return jsonify({"seq": nxt})
 
 
-@app.route('/admin')
+@app.route("/admin")
 @admin_required
 def admin():
-    return render_template('admin.html')
+    return render_template("admin.html")
 
 
-@app.route('/admin/users')
+@app.route("/admin/users")
 @admin_required
 def admin_users():
     with db_cursor() as cur:
         cur.execute("SELECT id, username, role FROM users ORDER BY username")
         users = cur.fetchall()
-    return render_template('admin_users.html', users=users)
+    return render_template("admin_users.html", users=users, reset_link=None)
 
 
-@app.route('/admin/users/add', methods=['POST'])
+@app.route("/admin/users/reset/<int:user_id>", methods=["POST"])
+@admin_required
+def admin_users_reset(user_id):
+    if user_id == current_user.id:
+        flash("You cannot reset your own password from this page.", "danger")
+        return redirect(url_for("admin_users"))
+
+    with db_cursor() as cur:
+        cur.execute("SELECT username FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+    if row is None:
+        flash("User not found.", "danger")
+        return redirect(url_for("admin_users"))
+
+    username = row[0]
+    token = _generate_reset_token()
+    expires_at = datetime.now(UTC) + timedelta(hours=1)
+
+    with db_cursor() as cur:
+        cur.execute(
+            "UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = %s AND used_at IS NULL",
+            (user_id,),
+        )
+        cur.execute(
+            "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (%s, %s, %s)",
+            (user_id, token, expires_at),
+        )
+        cur.execute("SELECT id, username, role FROM users ORDER BY username")
+        users = cur.fetchall()
+
+    reset_url = url_for("reset_password", token=token, _external=True)
+    flash(f'Password reset link created for "{username}".', "success")
+    return render_template(
+        "admin_users.html",
+        users=users,
+        reset_link={
+            "username": username,
+            "url": reset_url,
+            "masked_url": reset_url,
+        },
+    )
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT prt.id, prt.user_id FROM password_reset_tokens prt
+            WHERE prt.token = %s
+              AND prt.used_at IS NULL
+              AND prt.expires_at > NOW()
+            """,
+            (token,),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        flash("Reset link is invalid or expired.", "danger")
+        return redirect(url_for("admin_login"))
+
+    token_id, user_id = row
+
+    if request.method == "POST":
+        new_pw = request.form.get("new_password", "").strip()
+        confirm_pw = request.form.get("confirm_password", "").strip()
+        if not new_pw or len(new_pw) < 6:
+            flash("Password must be at least 6 characters.", "danger")
+            return render_template("reset_password.html")
+        if new_pw != confirm_pw:
+            flash("Passwords do not match.", "danger")
+            return render_template("reset_password.html")
+
+        with db_cursor() as cur:
+            cur.execute(
+                "UPDATE users SET password = %s, must_change_password = FALSE WHERE id = %s",
+                (hash_password(new_pw), user_id),
+            )
+            cur.execute(
+                "UPDATE password_reset_tokens SET used_at = NOW() WHERE id = %s",
+                (token_id,),
+            )
+
+        flash("Password reset successfully. You may now sign in.", "success")
+        return redirect(url_for("admin_login"))
+
+    return render_template("reset_password.html")
+
+
+@app.route("/admin/users/add", methods=["POST"])
 @admin_required
 def admin_users_add():
-    username = request.form.get('username', '').strip()
-    password = request.form.get('password', '').strip()
-    role = request.form.get('role', 'user')
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "").strip()
+    role = request.form.get("role", "user")
     if not username or not password:
-        flash('Username and password are required.', 'danger')
-        return redirect(url_for('admin_users'))
-    if role not in ('admin', 'user'):
-        role = 'user'
+        flash("Username and password are required.", "danger")
+        return redirect(url_for("admin_users"))
+    if role not in ("admin", "user"):
+        role = "user"
     try:
         with db_cursor() as cur:
             cur.execute(
                 "INSERT INTO users (username, password, role, must_change_password) VALUES (%s, %s, %s, TRUE)",
-                (username, hash_password(password), role)
+                (username, hash_password(password), role),
             )
-        flash(f'User "{username}" created.', 'success')
+        flash(f'User "{username}" created.', "success")
     except Exception:
-        flash(f'Could not create user "{username}" (may already exist).', 'danger')
-    return redirect(url_for('admin_users'))
+        flash(f'Could not create user "{username}" (may already exist).', "danger")
+    return redirect(url_for("admin_users"))
 
 
-@app.route('/admin/users/delete/<int:user_id>', methods=['POST'])
+@app.route("/admin/users/role/<int:user_id>", methods=["POST"])
+@admin_required
+def admin_users_set_role(user_id):
+    if user_id == current_user.id:
+        flash("You cannot change your own role from this page.", "danger")
+        return redirect(url_for("admin_users"))
+
+    new_role = (request.form.get("role", "") or "").strip().lower()
+    if new_role not in ("admin", "user"):
+        flash("Invalid role selection.", "danger")
+        return redirect(url_for("admin_users"))
+
+    with db_cursor() as cur:
+        cur.execute("SELECT username, role FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        if row is None:
+            flash("User not found.", "danger")
+            return redirect(url_for("admin_users"))
+
+        username, current_role = row
+        if current_role == new_role:
+            flash(f'User "{username}" is already {new_role}.', "info")
+            return redirect(url_for("admin_users"))
+
+        cur.execute("UPDATE users SET role = %s WHERE id = %s", (new_role, user_id))
+
+    flash(f'Updated "{username}" role to {new_role}.', "success")
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/users/delete/<int:user_id>", methods=["POST"])
 @admin_required
 def admin_users_delete(user_id):
     if user_id == current_user.id:
-        flash('You cannot delete your own account.', 'danger')
-        return redirect(url_for('admin_users'))
+        flash("You cannot delete your own account.", "danger")
+        return redirect(url_for("admin_users"))
     try:
         with db_cursor() as cur:
             cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
-        flash('User deleted.', 'success')
+        flash("User deleted.", "success")
     except Exception:
-        flash('Could not delete user.', 'danger')
-    return redirect(url_for('admin_users'))
+        flash("Could not delete user.", "danger")
+    return redirect(url_for("admin_users"))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)

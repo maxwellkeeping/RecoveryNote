@@ -99,6 +99,23 @@
     "AGREEMENT AUTHOR",
     "STATUS"
   ],
+  "copy_clear_fields": [
+    "END DATE\n(YYYY-MM-DD)",
+    "TERMINATION DATE (YYYY-MM-DD)",
+    "TERMINATION REASON",
+    "TERMINATION NOTES",
+    "CLOSURE DATE (YYYY-MM-DD)",
+    "CLOSURE REASON",
+    "CLOSURE NOTES",
+    "CLOSED DATE (YYYY-MM-DD)",
+    "CLOSE DATE (YYYY-MM-DD)",
+    "CLOSE REASON",
+    "CLOSE NOTES",
+    "EXPIRY DATE (YYYY-MM-DD)",
+    "EXPIRED DATE (YYYY-MM-DD)",
+    "EXPIRY REASON",
+    "EXPIRY NOTES"
+  ],
   "field_hints": {
     "AGREEMENT ID": {
       "placeholder": "e.g. GSIC-20260401-RN50027001",
@@ -109,7 +126,8 @@
       "display_label": "Agreement Name / Description"
     },
     "CLIENT \nCONTACT NAME": {
-      "display_label": "Client Contact Name"
+      "display_label": "Client Contact Name",
+      "placeholder": "Last name, First name"
     },
     "AGREEMENT TYPE": {
       "display_label": "Agreement Type"
@@ -118,7 +136,8 @@
       "display_label": "Previous Agreement #"
     },
     "AGREEMENT AUTHOR": {
-      "display_label": "Agreement Author"
+      "display_label": "Agreement Author",
+      "placeholder": "Last name, First name"
     },
     "eApprovals Package ID (253-YYYY-####)": {
       "display_label": "eApprovals Package ID",
@@ -138,15 +157,15 @@
     "FISCAL YEAR # MONTHS": {
       "input_type": "number",
       "min": "1",
-      "max": "12",
-      "placeholder": "1 – 12",
+      "max": "15",
+      "placeholder": "1 - 15",
       "display_label": "Fiscal Year # Months"
     },
     "AGREEMENT # MONTHS (optional)": {
       "input_type": "number",
       "min": "1",
-      "max": "12",
-      "placeholder": "1 – 12",
+      "max": "15",
+      "placeholder": "1 - 15",
       "display_label": "Agreement # Months"
     },
     "ONE-TIME": {
@@ -207,7 +226,8 @@
     },
     "COMMENTS": {
       "display_label": "Comments",
-      "input_type": "textarea"
+      "input_type": "textarea",
+      "placeholder": "Please accept this Recovery Note (RN) as authorization for GovTechON (GTO), Infrastructure Technology Operations Division (ITOD) to invoice <CLUSTER>, <MINISTRY> the amount of <$> under the cost center identified for <SPECIFY>.\n\n<PROVIDE DETAILS ON THE BUSINESS SOLUTION, RATIONALE, WIA/PROJECT AT A HIGH LEVEL AND 2 TO 3 SENTENCES AT THE MOST>"
     },
     "IFIS CODE": {
       "placeholder": "000-000000-0000-000000-0000",

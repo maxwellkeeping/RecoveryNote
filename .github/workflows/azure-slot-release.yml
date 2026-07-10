@@ -12,20 +12,41 @@ on:
           - "false"
           - "true"
 
+permissions:
+  contents: read
 jobs:
   deploy-staging:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Deploy to staging slot
+      - name: Deploy to staging slot (attempt 1)
+        id: deploy_attempt_1
+        continue-on-error: true
         uses: azure/webapps-deploy@v3
         with:
           app-name: recoverynote-gyjdtex5
           slot-name: staging
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_STAGING }}
 
+      - name: Wait before retry after transient deploy conflict
+        if: ${{ steps.deploy_attempt_1.outcome == 'failure' }}
+        run: |
+          echo "Initial deploy attempt failed. Waiting before retry..."
+          sleep 20
+
+      - name: Deploy to staging slot (attempt 2)
+        if: ${{ steps.deploy_attempt_1.outcome == 'failure' }}
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: recoverynote-gyjdtex5
+          slot-name: staging
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_STAGING }}
+
+      - name: Ensure deploy succeeded
+        if: ${{ steps.deploy_attempt_1.outcome == 'failure' }}
+        run: echo "Deploy succeeded on retry."
       - name: Smoke check login page
         run: |
           for i in {1..10}; do

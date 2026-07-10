@@ -12,7 +12,7 @@
       </div>
 
       <!-- Form -->
-      <form method="post" action="{% if edit_index %}{{ url_for('update', id=edit_index) }}{% else %}{{ url_for('submit') }}{% endif %}" id="entry-form">
+      <form method="post" enctype="multipart/form-data" action="{% if edit_index %}{{ url_for('update', id=edit_index) }}{% else %}{{ url_for('submit') }}{% endif %}" id="entry-form">
 
         {% for group, items in groups %}
           <div class="section-card">
@@ -53,7 +53,7 @@
                           <select id="aid-fyend" class="form-select form-select-sm" style="width:72px">
                             <option value="">—</option>
                             {% for y in range(25, 36) %}
-                            <option value="{{ y }}">{{ y }}/{{ y + 1 }}</option>
+                            <option value="{{ y + 1 }}">{{ y }}/{{ y + 1 }}</option>
                             {% endfor %}
                           </select>
                         </div>
@@ -89,6 +89,9 @@
                         {% for opt in it.options %}
                           <option value="{{ opt }}" {% if values.get(it.name) == opt %}selected{% endif %}>{{ opt }}</option>
                         {% endfor %}
+                        {% if values.get(it.name) and values.get(it.name) not in it.options %}
+                          <option value="{{ values.get(it.name) }}" selected>{{ values.get(it.name) }} (inactive)</option>
+                        {% endif %}
                       </select>
 
                     {% elif it.input_mask %}
@@ -132,14 +135,31 @@
                     {% elif it.input_type == 'textarea' %}
                       <textarea name="{{ it.name }}" id="field-{{ it.name }}"
                                 class="form-control" rows="3"
-                                placeholder="{{ it.placeholder or '' }}"
                                 {% if it.required %}required{% endif %}>{{ values.get(it.name, '') }}</textarea>
+
+                    {% elif it.name == 'eApprovals_Package_ID_253_YYYY' %}
+                      <input type="text" name="{{ it.name }}" id="field-{{ it.name }}"
+                             class="form-control"
+                             placeholder="{{ it.placeholder or '' }}"
+                             value="{{ values.get(it.name, '') }}"
+                             {% if it.required %}required{% endif %}>
+                      <div class="hint-text" id="eapprovals-link-wrap">
+                        {% if values.get(it.name, '') %}
+                          <a id="eapprovals-link"
+                             href="https://www.eapprovals.cac.gov.on.ca/#/approval/{{ values.get(it.name, '') }}"
+                             target="_blank" rel="noopener noreferrer">Open eApprovals package</a>
+                          <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="copy-eapprovals-link">Copy link</button>
+                        {% else %}
+                          <span id="eapprovals-link">Link will appear after Package ID is entered.</span>
+                        {% endif %}
+                      </div>
 
                     {% else %}
                       <input type="text" name="{{ it.name }}" id="field-{{ it.name }}"
                              class="form-control"
                              placeholder="{{ it.placeholder or '' }}"
                              value="{{ values.get(it.name, '') }}"
+                             {% if it.name == 'AGREEMENT_AUTHOR' %}readonly{% endif %}
                              {% if it.required %}required{% endif %}>
                     {% endif %}
 
@@ -153,6 +173,28 @@
           </div>
         {% endfor %}
 
+        <div class="section-card">
+          <div class="card-header">Attachments</div>
+          <div class="card-body">
+            <label class="form-label" for="attachments">Add Attachments (optional)</label>
+            <input type="file" id="attachments" name="attachments" class="form-control" multiple>
+            <div class="hint-text">You can upload multiple files. Uploading new files on edit keeps existing ones.</div>
+
+            {% if edit_index and attachments %}
+              <div class="mt-2">
+                <div class="form-label" style="font-size:.72rem">Existing Attachments</div>
+                <ul class="mb-0" style="font-size:.82rem; padding-left: 1.1rem;">
+                  {% for a in attachments %}
+                    <li>
+                      <a href="{{ url_for('download_attachment', id=edit_index, filename=a['stored']) }}">{{ a['name'] }}</a>
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+
         <!-- Action buttons -->
         <div class="section-card">
           <div class="card-body py-3">
@@ -163,6 +205,9 @@
               {% if edit_index %}
                 <a href="{{ url_for('generate', id=edit_index) }}" class="btn btn-generate-action">
                   ⬇ Generate Document
+                </a>
+                <a href="{{ url_for('copy_submission', id=edit_index) }}" class="btn btn-outline-primary">
+                  Copy As New
                 </a>
               {% else %}
                 <button type="submit" formaction="{{ url_for('submit') }}" formmethod="post"
@@ -257,20 +302,32 @@
                      String(today.getMonth()+1).padStart(2,'0') + '-' +
                      String(today.getDate()).padStart(2,'0');
 
-      // If editing, parse existing value into sub-fields
+      // If editing, parse existing value into sub-fields.
       if (idField.value) {
-        var parts = idField.value.match(/^([A-Z]+)-(\d{8})-RN(\d+?)(\d{2})(\d{3})$/);
+        var parts = idField.value.match(/^([A-Z]+)-(\d{8})-RN(\d+)$/);
         if (parts) {
+          var abbr = parts[1];
+          var compactDate = parts[2];
+          var tail = parts[3];
           var opts = cluster.options;
           for (var i = 0; i < opts.length; i++) {
-            if (opts[i].value.split('|')[0] === parts[1]) {
-              cluster.value = opts[i].value;
-              break;
+            var value = opts[i].value || '';
+            var optParts = value.split('|');
+            var optAbbr = optParts[0] || '';
+            var optNum = optParts[1] || '';
+            if (!optNum || optAbbr !== abbr || !tail.startsWith(optNum)) {
+              continue;
             }
+            var rest = tail.slice(optNum.length);
+            if (rest.length < 5) {
+              continue;
+            }
+            cluster.value = value;
+            dateEl.value = compactDate.substring(0,4)+'-'+compactDate.substring(4,6)+'-'+compactDate.substring(6,8);
+            fyend.value = rest.substring(0,2);
+            seqEl.value = rest.substring(2);
+            break;
           }
-          dateEl.value = parts[2].substring(0,4)+'-'+parts[2].substring(4,6)+'-'+parts[2].substring(6,8);
-          fyend.value = parts[4];
-          seqEl.value = parts[5];
         }
       }
 
@@ -293,13 +350,138 @@
         var cp = clusterParts();
         var fy = fyend.value.trim();
         if (!cp.abbr || d.length !== 8) return;
-        var prefix = cp.abbr + '-' + d + '-RN' + cp.num + fy;
-        fetch('/api/next-seq?prefix=' + encodeURIComponent(prefix))
+        var query = new URLSearchParams({
+          cluster_abbr: cp.abbr,
+          cluster_num: cp.num,
+          fy: fy
+        });
+        fetch('/api/next-seq?' + query.toString())
           .then(function(r) { return r.json(); })
           .then(function(data) {
             seqEl.value = String(data.seq).padStart(3, '0');
             compose();
           });
+      });
+    })();
+
+    // ── eApprovals link helper ───────────────────────────────────────────────
+    (function() {
+      var pkgField = document.getElementById('field-eApprovals_Package_ID_253_YYYY');
+      var wrap = document.getElementById('eapprovals-link-wrap');
+      if (!pkgField || !wrap) return;
+
+      function bindCopyButton() {
+        var copyBtn = document.getElementById('copy-eapprovals-link');
+        var link = document.getElementById('eapprovals-link');
+        if (!copyBtn || !link || !link.href) return;
+        copyBtn.addEventListener('click', function() {
+          navigator.clipboard.writeText(link.href)
+            .then(function() {
+              var prev = copyBtn.textContent;
+              copyBtn.textContent = 'Copied';
+              setTimeout(function() { copyBtn.textContent = prev; }, 1200);
+            })
+            .catch(function() {
+              copyBtn.textContent = 'Copy failed';
+              setTimeout(function() { copyBtn.textContent = 'Copy link'; }, 1200);
+            });
+        });
+      }
+
+      function refresh() {
+        var pkg = (pkgField.value || '').trim();
+        if (!pkg) {
+          wrap.innerHTML = '<span id="eapprovals-link">Link will appear after Package ID is entered.</span>';
+          return;
+        }
+        var href = 'https://www.eapprovals.cac.gov.on.ca/#/approval/' + encodeURIComponent(pkg);
+        wrap.innerHTML = '<a id="eapprovals-link" href="' + href + '" target="_blank" rel="noopener noreferrer">Open eApprovals package</a>' +
+          '<button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="copy-eapprovals-link">Copy link</button>';
+        bindCopyButton();
+      }
+
+      pkgField.addEventListener('input', refresh);
+      refresh();
+      bindCopyButton();
+    })();
+
+    // ── Comments auto-fill from selected data ───────────────────────────────
+    (function() {
+      var commentsEl = document.getElementById('field-COMMENTS');
+      if (!commentsEl) return;
+
+      var clusterEl = document.getElementById('field-SERVICE_OWNER');
+      var totalEl = document.getElementById('field-TOTAL_RECOVERY');
+      var monthlyEl = document.getElementById('field-MONTHLY_RECURRING');
+      var annualEl = document.getElementById('field-ANNUAL');
+      var oneTimeEl = document.getElementById('field-ONE_TIME');
+
+      function parseAmount(v) {
+        if (!v) return null;
+        var cleaned = String(v).replace(/[$,\s]/g, '');
+        if (!cleaned) return null;
+        var n = Number(cleaned);
+        return Number.isFinite(n) ? n : null;
+      }
+
+      function amountText() {
+        var candidates = [
+          totalEl && totalEl.value,
+          monthlyEl && monthlyEl.value,
+          annualEl && annualEl.value,
+          oneTimeEl && oneTimeEl.value
+        ];
+        for (var i = 0; i < candidates.length; i++) {
+          var n = parseAmount(candidates[i]);
+          if (n !== null) {
+            return '$' + n.toLocaleString('en-CA', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2
+            });
+          }
+        }
+        return '<$>';
+      }
+
+      function buildTemplate() {
+        var cluster = (clusterEl && clusterEl.value && clusterEl.value.trim()) || '<CLUSTER>';
+        var amount = amountText();
+        return 'Please accept this Recovery Note (RN) as authorization for GovTechON (GTO), ' +
+          'Infrastructure Technology Operations Division (ITOD) to invoice ' +
+          cluster + ', <MINISTRY> the amount of ' + amount +
+          ' under the cost center identified for <SPECIFY>.\n\n' +
+          '<PROVIDE DETAILS ON THE BUSINESS SOLUTION, RATIONALE, WIA/PROJECT AT A HIGH LEVEL AND 2 TO 3 SENTENCES AT THE MOST>';
+      }
+
+      var allowAuto = false;
+      var currentTemplate = buildTemplate();
+      if (!commentsEl.value.trim()) {
+        commentsEl.value = currentTemplate;
+        allowAuto = true;
+      } else {
+        allowAuto = (commentsEl.value === currentTemplate);
+      }
+
+      function refreshIfAuto() {
+        currentTemplate = buildTemplate();
+        if (allowAuto) {
+          commentsEl.value = currentTemplate;
+        }
+      }
+
+      commentsEl.addEventListener('input', function() {
+        if (!commentsEl.value.trim()) {
+          allowAuto = true;
+          refreshIfAuto();
+          return;
+        }
+        allowAuto = (commentsEl.value === currentTemplate);
+      });
+
+      [clusterEl, totalEl, monthlyEl, annualEl, oneTimeEl].forEach(function(el) {
+        if (!el) return;
+        el.addEventListener('input', refreshIfAuto);
+        el.addEventListener('change', refreshIfAuto);
       });
     })();
     </script>

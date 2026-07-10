@@ -1,10 +1,15 @@
 {% extends "base.html" %}
 
 {% block title %}Tracking{% endblock %}
-{% block container_width %}1200{% endblock %}
+{% block container_width %}1100{% endblock %}
 
 {% block extra_css %}
-      .table { margin: 0; font-size: .85rem; }
+      .table { margin: 0; font-size: .82rem; }
+      .table > :not(caption) > * > * { padding: .4rem .45rem; }
+      #track-table {
+        width: 100%;
+        table-layout: fixed;
+      }
       .table thead th {
         background: #f7f9fc;
         color: #0E2841;
@@ -13,7 +18,7 @@
         text-transform: uppercase;
         letter-spacing: .6px;
         border-bottom: 2px solid #d1dbe8;
-        white-space: nowrap;
+        white-space: normal;
       }
       .table tbody tr:hover { background: #f0f7fc; }
       .badge-status {
@@ -29,10 +34,11 @@
       .badge-pending  { background: #fff3cd; color: #664d03; }
       .badge-default  { background: #e4f0f7; color: #156082; }
       .btn-action {
-        font-size: .75rem;
-        padding: .25rem .65rem;
+        font-size: .68rem;
+        padding: .2rem .45rem;
         border-radius: 6px;
         font-weight: 500;
+        line-height: 1.2;
       }
       .btn-generate {
         background: linear-gradient(135deg, #0E2841, #156082);
@@ -58,10 +64,43 @@
         border-color: #d1dbe8;
         font-size: .875rem;
       }
+      .search-bar #search-input { flex: 1 1 280px; min-width: 220px; }
+      .search-bar .form-select { flex: 1 1 180px; }
       .search-bar input:focus {
         border-color: #156082;
         box-shadow: 0 0 0 3px rgba(21,96,130,.15);
         outline: none;
+      }
+      .copy-link-btn {
+        border: 1px solid #d1dbe8;
+        background: #fff;
+        color: #156082;
+        font-size: .68rem;
+        border-radius: 4px;
+        padding: 0 .35rem;
+        margin-left: 0;
+        margin-top: .25rem;
+        display: block;
+      }
+      #track-table td {
+        word-break: normal;
+        overflow-wrap: break-word;
+      }
+      #track-table th:nth-child(1), #track-table td:nth-child(1) { width: 40px; }
+      #track-table th:nth-child(2), #track-table td:nth-child(2) { width: 120px; }
+      #track-table th:nth-child(3), #track-table td:nth-child(3) { width: 180px; }
+      #track-table th:nth-child(4), #track-table td:nth-child(4) { width: 100px; }
+      #track-table th:nth-child(5), #track-table td:nth-child(5) { width: 95px; }
+      #track-table th:nth-child(11), #track-table td:nth-child(11) { width: 110px; }
+      .col-status .badge-status {
+        white-space: nowrap;
+        display: inline-block;
+      }
+      .actions-cell .d-flex { flex-wrap: wrap; }
+      .eapprovals-link {
+        display: inline-block;
+        max-width: 140px;
+        overflow-wrap: anywhere;
       }
 {% endblock %}
 
@@ -86,7 +125,14 @@
       <div class="section-card">
         <div class="card-header d-flex justify-content-between align-items-center">
           <span>Agreements</span>
-          <span id="visible-count" class="text-muted" style="font-size:.72rem;text-transform:none;letter-spacing:0"></span>
+          <div class="d-flex align-items-center gap-3">
+            <span id="visible-count" class="text-muted" style="font-size:.72rem;text-transform:none;letter-spacing:0"></span>
+            {% if current_user.is_admin %}
+            <a href="{{ url_for('export_csv') }}" class="btn btn-sm btn-outline-secondary" style="font-size:.75rem;padding:.25rem .65rem">
+              Export CSV
+            </a>
+            {% endif %}
+          </div>
         </div>
 
         {% if rows %}
@@ -97,25 +143,28 @@
                 <th style="width:40px">#</th>
                 <th>Agreement ID</th>
                 <th>Name / Description</th>
-                <th>Type</th>
-                <th>Status</th>
+                <th class="col-type">Type</th>
+                <th class="col-status">Status</th>
                 <th>Author</th>
                 <th>Start Date</th>
                 <th>End Date</th>
                 <th>Service Owner</th>
-                <th style="width:130px">Actions</th>
+                <th>eApprovals</th>
+                <th style="width:110px">Actions</th>
               </tr>
             </thead>
             <tbody id="track-tbody">
               {% for row in rows %}
               {% set agr_id = row.get('AGREEMENT_ID','') %}
               {% set cluster_abbr = agr_id.split('-')[0] if '-' in agr_id else agr_id %}
+              {% set package_id = (row.get('eApprovals_Package_ID_253_YYYY','') or '').strip() %}
               <tr data-search="{{ [
                     agr_id,
                     row.get('AGREEMENT_NAME_DESCRIPTION',''),
                     row.get('AGREEMENT_AUTHOR',''),
                     row.get('AGREEMENT_TYPE',''),
-                    row.get('SERVICE_OWNER','')
+                    row.get('SERVICE_OWNER',''),
+                    package_id
                   ] | join(' ') | lower }}"
                   data-cluster="{{ cluster_abbr | lower }}"
                   data-status="{{ row.get('STATUS','') | lower }}">
@@ -127,15 +176,15 @@
                     {{ row.get('AGREEMENT_ID') or '—' }}
                   </a>
                 </td>
-                <td style="max-width:220px">
+                <td style="max-width:180px">
                   <a href="{{ url_for('edit', id=row.id) }}"
                      class="text-truncate d-block" title="{{ row.get('AGREEMENT_NAME_DESCRIPTION','') }}"
                      style="color:#0E2841;text-decoration:none;">
                     {{ row.get('AGREEMENT_NAME_DESCRIPTION') or '—' }}
                   </a>
                 </td>
-                <td>{{ row.get('AGREEMENT_TYPE') or '—' }}</td>
-                <td>
+                <td class="col-type">{{ row.get('AGREEMENT_TYPE') or '—' }}</td>
+                <td class="col-status">
                   {% set status = row.get('STATUS','') | lower %}
                   {% if 'active' in status %}
                     <span class="badge-status badge-active">{{ row.get('STATUS') }}</span>
@@ -151,11 +200,26 @@
                 <td style="white-space:nowrap">{{ row.get('START_DATE_YYYY_MM_DD') or '—' }}</td>
                 <td style="white-space:nowrap">{{ row.get('END_DATE_YYYY_MM_DD') or '—' }}</td>
                 <td>{{ row.get('SERVICE_OWNER') or '—' }}</td>
-                <td>
+                <td style="max-width:150px">
+                  {% if package_id %}
+                    <a href="https://www.eapprovals.cac.gov.on.ca/#/approval/{{ package_id }}"
+                       target="_blank" rel="noopener noreferrer" class="eapprovals-link">
+                      {{ package_id }}
+                    </a>
+                    <button type="button" class="copy-link-btn" data-link="https://www.eapprovals.cac.gov.on.ca/#/approval/{{ package_id }}">Copy</button>
+                  {% else %}
+                    <span class="text-muted">Not populated</span>
+                  {% endif %}
+                </td>
+                <td class="actions-cell">
                   <div class="d-flex gap-1">
                     <a href="{{ url_for('generate', id=row.id) }}"
                        class="btn btn-action btn-generate" title="Download Recovery Note docx">
                       ⬇ Doc
+                    </a>
+                    <a href="{{ url_for('copy_submission', id=row.id) }}"
+                       class="btn btn-action btn-outline-primary" title="Create a new agreement by copying this one">
+                      ⧉ Copy
                     </a>
                     <form method="post" action="{{ url_for('delete', id=row.id) }}"
                           onsubmit="return confirm('Delete this agreement?')">
@@ -242,5 +306,20 @@
         const isFiltered = q || cluster || status;
         el.textContent = isFiltered ? `Showing ${visible} of ${total}` : '';
       }
+
+      document.querySelectorAll('.copy-link-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var link = btn.getAttribute('data-link') || '';
+          if (!link) return;
+          navigator.clipboard.writeText(link).then(function() {
+            var prev = btn.textContent;
+            btn.textContent = 'Copied';
+            setTimeout(function() { btn.textContent = prev; }, 1200);
+          }).catch(function() {
+            btn.textContent = 'Failed';
+            setTimeout(function() { btn.textContent = 'Copy'; }, 1200);
+          });
+        });
+      });
     </script>
 {% endblock %}
