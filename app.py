@@ -1596,6 +1596,12 @@ def logout():
 
 @app.route("/", methods=["GET"])
 @login_required
+def index():
+    return redirect(url_for("track"))
+
+
+@app.route("/new-agreement", methods=["GET"])
+@login_required
 def form():
     groups = load_field_groups()
     values = {
