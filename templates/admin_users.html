@@ -2,106 +2,341 @@
 
 {% block title %}Manage Users{% endblock %}
 
+{% block extra_css %}
+      .users-shell {
+        background: linear-gradient(180deg, #f4f4f4 0%, #ffffff 62%);
+        border: 1px solid #c6c6c6;
+        border-radius: 6px;
+        padding: 1rem 1rem .95rem;
+      }
+      .users-topbar {
+        display: flex;
+        align-items: center;
+        gap: .8rem;
+      }
+      .users-back-link {
+        color: #525252;
+        text-decoration: none;
+        font-size: .78rem;
+        font-weight: 600;
+      }
+      .users-back-link:hover { color: #161616; }
+
+      .users-title {
+        color: #161616;
+        margin: .2rem 0 0;
+        font-size: 1.5rem;
+        font-weight: 750;
+      }
+      .users-subtitle {
+        margin: .12rem 0 .95rem;
+        color: #525252;
+        font-size: .83rem;
+      }
+
+      .users-top-grid {
+        display: grid;
+        grid-template-columns: minmax(280px, 360px) 1fr;
+        gap: .85rem;
+        margin-bottom: .85rem;
+      }
+      .users-panel {
+        background: #fff;
+        border: 1px solid #c6c6c6;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .users-panel-head {
+        background: #e8e8e8;
+        color: #161616;
+        padding: .64rem .9rem;
+        border-bottom: 1px solid #c6c6c6;
+        font-size: .75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .4px;
+      }
+      .users-panel-body {
+        padding: .9rem;
+      }
+
+      .users-form .form-label {
+        font-size: .69rem;
+        color: #525252;
+        font-weight: 700;
+        letter-spacing: .25px;
+        text-transform: uppercase;
+      }
+      .users-form .form-control,
+      .users-form .form-select {
+        border-color: #8d8d8d;
+        font-size: .82rem;
+      }
+      .users-form .form-control:focus,
+      .users-form .form-select:focus {
+        border-color: #0f62fe;
+        box-shadow: 0 0 0 3px rgba(15,98,254,.18);
+      }
+      .btn-add-user {
+        background: #0f62fe;
+        border: none;
+        color: #fff;
+        font-size: .8rem;
+        font-weight: 700;
+      }
+      .btn-add-user:hover {
+        color: #fff;
+        opacity: .9;
+      }
+
+      .reset-link-box {
+        background: #f4f4f4;
+        border: 1px dashed #a8a8a8;
+        border-radius: 10px;
+        padding: .72rem;
+      }
+      .reset-link-mask {
+        background: #fff;
+        border: 1px solid #8d8d8d;
+        border-radius: 8px;
+        padding: .5rem .62rem;
+        font-size: .77rem;
+      }
+
+      .users-table-wrap {
+        overflow: auto;
+      }
+      .users-table {
+        width: 100%;
+        margin: 0;
+        min-width: 700px;
+        border-collapse: separate;
+        border-spacing: 0;
+      }
+      .users-table thead th {
+        position: sticky;
+        top: 0;
+        background: #e8e8e8;
+        z-index: 1;
+        color: #161616;
+        font-size: .72rem;
+        text-transform: uppercase;
+        letter-spacing: .4px;
+        padding: .66rem .8rem;
+        border-bottom: 1px solid #c6c6c6;
+      }
+      .users-table tbody td {
+        padding: .67rem .8rem;
+        vertical-align: middle;
+        border-bottom: 1px solid #e0e0e0;
+        font-size: .82rem;
+      }
+      .users-table tbody tr:hover {
+        background: #f4f4f4;
+      }
+      .users-table tbody tr:nth-child(even) {
+        background: #fcfcfc;
+      }
+
+      .user-name {
+        font-weight: 700;
+        color: #161616;
+      }
+      .role-chip {
+        display: inline-block;
+        border-radius: 999px;
+        padding: .22rem .58rem;
+        font-size: .65rem;
+        font-weight: 700;
+        letter-spacing: .3px;
+        text-transform: uppercase;
+        border: 1px solid transparent;
+      }
+      .role-admin {
+        background: #e8efff;
+        color: #1c4688;
+        border-color: #ccdcfe;
+      }
+      .role-user {
+        background: #eff3f7;
+        color: #4d6072;
+        border-color: #dde5ee;
+      }
+
+      .action-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .28rem;
+      }
+      .action-group form { margin: 0; }
+      .btn-user-action {
+        font-size: .69rem;
+        font-weight: 700;
+        border-radius: 7px;
+        padding: .25rem .52rem;
+        border: 1px solid transparent;
+        line-height: 1.15;
+        background: #fff;
+      }
+      .btn-user-role {
+        border-color: #8d8d8d;
+        color: #161616;
+        background: #ffffff;
+      }
+      .btn-user-role:hover { background: #f4f4f4; color: #161616; }
+      .btn-user-reset {
+        border-color: #f1c21b;
+        color: #5e4200;
+        background: #fff8e1;
+      }
+      .btn-user-reset:hover { background: #fcefb2; color: #5e4200; }
+      .btn-user-delete {
+        border-color: #da1e28;
+        color: #a2191f;
+        background: #fff1f1;
+      }
+      .btn-user-delete:hover { background: #ffd7d9; color: #8a141a; }
+
+      .self-pill {
+        display: inline-block;
+        border: 1px solid #c6c6c6;
+        background: #f4f4f4;
+        color: #525252;
+        border-radius: 999px;
+        font-size: .66rem;
+        padding: .18rem .5rem;
+        text-transform: uppercase;
+        letter-spacing: .3px;
+        font-weight: 700;
+      }
+
+      @media (max-width: 991.98px) {
+        .users-top-grid {
+          grid-template-columns: 1fr;
+        }
+        .users-topbar {
+          align-items: flex-start;
+        }
+      }
+{% endblock %}
+
 {% block content %}
-      <div class="page-header">
-        <h1>Manage Users</h1>
-        <p><a href="{{ url_for('admin') }}">&larr; Back to Admin</a></p>
-      </div>
+      <div class="users-shell">
+        <div class="users-topbar">
+          <a class="users-back-link" href="{{ url_for('admin') }}">&larr; Back to Admin</a>
+        </div>
 
-      {% if reset_link %}
-      <div class="section-card mb-4 border border-info-subtle">
-        <div class="card-header">Password Reset Link</div>
-        <div class="card-body">
-          <p class="mb-2" style="font-size:.85rem">
-            Link generated for <strong>{{ reset_link.username }}</strong>. Share this securely.
-          </p>
-          <div class="d-flex flex-column flex-md-row gap-2 align-items-md-center">
-            <div class="form-control masked-input" style="background:#f7f9fc">{{ reset_link.masked_url }}</div>
-            <button
-              type="button"
-              id="copyResetLink"
-              class="btn btn-sm btn-outline-primary"
-              data-reset-url="{{ reset_link.url }}"
-            >
-              Copy Reset Link
-            </button>
+        <h1 class="users-title">Manage Users</h1>
+        <p class="users-subtitle">Administer local users, roles, and password reset links.</p>
+
+        <div class="users-top-grid">
+          <div class="users-panel">
+            <div class="users-panel-head">Add User</div>
+            <div class="users-panel-body">
+              <form method="post" action="{{ url_for('admin_users_add') }}" class="users-form row g-2">
+                <div class="col-12">
+                  <label class="form-label" for="username">Username</label>
+                  <input type="text" name="username" id="username" class="form-control" required autocomplete="off">
+                </div>
+                <div class="col-12">
+                  <label class="form-label" for="password">Password</label>
+                  <input type="password" name="password" id="password" class="form-control" required autocomplete="new-password">
+                </div>
+                <div class="col-12 col-md-7">
+                  <label class="form-label" for="role">Role</label>
+                  <select name="role" id="role" class="form-select">
+                    <option value="user" selected>User</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div class="col-12 col-md-5 d-grid">
+                  <button type="submit" class="btn btn-add-user">Add User</button>
+                </div>
+              </form>
+            </div>
           </div>
-          <small id="copyResetStatus" class="text-muted d-block mt-2"></small>
-        </div>
-      </div>
-      {% endif %}
 
-      <!-- Add User Form -->
-      <div class="section-card mb-4">
-        <div class="card-header">Add User</div>
-        <div class="card-body">
-          <form method="post" action="{{ url_for('admin_users_add') }}" class="row g-2 align-items-end">
-            <div class="col-sm-4">
-              <label class="form-label" for="username">Username</label>
-              <input type="text" name="username" id="username" class="form-control" required autocomplete="off">
+          {% if reset_link %}
+          <div class="users-panel">
+            <div class="users-panel-head">Latest Password Reset Link</div>
+            <div class="users-panel-body">
+              <div class="reset-link-box">
+                <p class="mb-2" style="font-size:.82rem;color:#525252">
+                  Link generated for <strong style="color:#161616">{{ reset_link.username }}</strong>. Share this securely.
+                </p>
+                <div class="d-flex flex-column flex-md-row gap-2 align-items-md-center">
+                  <div class="reset-link-mask masked-input flex-grow-1">{{ reset_link.masked_url }}</div>
+                  <button
+                    type="button"
+                    id="copyResetLink"
+                    class="btn btn-sm btn-outline-primary"
+                    data-reset-url="{{ reset_link.url }}"
+                  >
+                    Copy Reset Link
+                  </button>
+                </div>
+                <small id="copyResetStatus" class="d-block mt-2" style="color:#525252"></small>
+              </div>
             </div>
-            <div class="col-sm-4">
-              <label class="form-label" for="password">Password</label>
-              <input type="password" name="password" id="password" class="form-control" required autocomplete="new-password">
+          </div>
+          {% else %}
+          <div class="users-panel">
+            <div class="users-panel-head">Password Reset Links</div>
+            <div class="users-panel-body">
+              <p class="mb-0" style="font-size:.82rem;color:#525252">
+                No reset link generated in this session.
+              </p>
             </div>
-            <div class="col-sm-2">
-              <label class="form-label" for="role">Role</label>
-              <select name="role" id="role" class="form-select">
-                <option value="user" selected>User</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-            <div class="col-sm-2">
-              <button type="submit" class="btn btn-submit w-100">Add</button>
-            </div>
-          </form>
+          </div>
+          {% endif %}
         </div>
-      </div>
 
-      <!-- User List -->
-      <div class="section-card">
-        <div class="card-header">Current Users</div>
-        <div class="card-body p-0">
-          <table class="table table-hover mb-0">
-            <thead>
-              <tr>
-                <th style="padding-left:1rem">Username</th>
-                <th>Role</th>
-                <th style="width:220px"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for user in users %}
-              <tr>
-                <td style="padding-left:1rem">{{ user[1] }}</td>
-                <td><span class="badge bg-{{ 'primary' if user[2] == 'admin' else 'secondary' }}">{{ user[2] }}</span></td>
-                <td>
-                  {% if user[0] != current_user.id %}
-                  <div class="d-flex gap-2">
-                    <form method="post" action="{{ url_for('admin_users_set_role', user_id=user[0]) }}"
-                          onsubmit="return confirm('Change role for {{ user[1] }} to {{ 'user' if user[2] == 'admin' else 'admin' }}?')">
-                      <input type="hidden" name="role" value="{{ 'user' if user[2] == 'admin' else 'admin' }}">
-                      <button type="submit" class="btn btn-sm btn-outline-primary">
-                        {{ 'Set as User' if user[2] == 'admin' else 'Set as Admin' }}
-                      </button>
-                    </form>
-                    <form method="post" action="{{ url_for('admin_users_reset', user_id=user[0]) }}"
-                          onsubmit="return confirm('Create password reset link for {{ user[1] }}?')">
-                      <button type="submit" class="btn btn-sm btn-outline-warning">Create Reset Link</button>
-                    </form>
-                    <form method="post" action="{{ url_for('admin_users_delete', user_id=user[0]) }}"
-                          onsubmit="return confirm('Delete user {{ user[1] }}?')">
-                      <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-                    </form>
-                  </div>
-                  {% else %}
-                  <span class="text-muted" style="font-size:.75rem">You</span>
-                  {% endif %}
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+        <div class="users-panel">
+          <div class="users-panel-head">Current Users</div>
+          <div class="users-table-wrap">
+            <table class="users-table">
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Role</th>
+                  <th style="width:310px">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for user in users %}
+                <tr>
+                  <td><span class="user-name">{{ user[1] }}</span></td>
+                  <td>
+                    <span class="role-chip {{ 'role-admin' if user[2] == 'admin' else 'role-user' }}">{{ user[2] }}</span>
+                  </td>
+                  <td>
+                    {% if user[0] != current_user.id %}
+                    <div class="action-group">
+                      <form method="post" action="{{ url_for('admin_users_set_role', user_id=user[0]) }}"
+                            onsubmit="return confirm('Change role for {{ user[1] }} to {{ 'user' if user[2] == 'admin' else 'admin' }}?')">
+                        <input type="hidden" name="role" value="{{ 'user' if user[2] == 'admin' else 'admin' }}">
+                        <button type="submit" class="btn-user-action btn-user-role">
+                          {{ 'Set as User' if user[2] == 'admin' else 'Set as Admin' }}
+                        </button>
+                      </form>
+                      <form method="post" action="{{ url_for('admin_users_reset', user_id=user[0]) }}"
+                            onsubmit="return confirm('Create password reset link for {{ user[1] }}?')">
+                        <button type="submit" class="btn-user-action btn-user-reset">Create Reset Link</button>
+                      </form>
+                      <form method="post" action="{{ url_for('admin_users_delete', user_id=user[0]) }}"
+                            onsubmit="return confirm('Delete user {{ user[1] }}?')">
+                        <button type="submit" class="btn-user-action btn-user-delete">Delete</button>
+                      </form>
+                    </div>
+                    {% else %}
+                    <span class="self-pill">You</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 {% endblock %}

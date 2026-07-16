@@ -22,23 +22,45 @@
       }
       .table tbody tr:hover { background: #f0f7fc; }
       .badge-status {
-        font-size: .72rem;
-        font-weight: 600;
-        border-radius: 20px;
-        padding: .28em .75em;
-        text-transform: uppercase;
-        letter-spacing: .4px;
+        font-size: .71rem;
+        font-weight: 700;
+        border-radius: 999px;
+        padding: .24rem .62rem;
+        text-transform: none;
+        letter-spacing: .2px;
+        line-height: 1.1;
+        border: 1px solid transparent;
       }
-      .badge-active   { background: #d4edda; color: #1a6b30; }
-      .badge-inactive { background: #f8d7da; color: #842029; }
-      .badge-pending  { background: #fff3cd; color: #664d03; }
-      .badge-default  { background: #e4f0f7; color: #156082; }
+      .badge-active   { background: #d4edda; color: #1a6b30; border-color: #b7dfc0; }
+      .badge-inactive { background: #f8d7da; color: #842029; border-color: #efb9c0; }
+      .badge-pending  { background: #fff3cd; color: #664d03; border-color: #f4dda0; }
+      .badge-default  { background: #e4f0f7; color: #156082; border-color: #c6dfef; }
       .btn-action {
-        font-size: .68rem;
-        padding: .2rem .45rem;
+        min-width: 64px;
+        height: 28px;
+        padding: 0 .45rem;
         border-radius: 6px;
-        font-weight: 500;
-        line-height: 1.2;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: .28rem;
+        font-size: .68rem;
+        font-weight: 600;
+        line-height: 1;
+        white-space: nowrap;
+      }
+      .btn-action .action-icon {
+        width: 14px;
+        height: 14px;
+        display: block;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .btn-action .action-label {
+        display: inline-block;
       }
       .btn-generate {
         background: linear-gradient(135deg, #0E2841, #156082);
@@ -71,6 +93,34 @@
         box-shadow: 0 0 0 3px rgba(21,96,130,.15);
         outline: none;
       }
+      .column-picker {
+        position: relative;
+      }
+      .column-picker .dropdown-toggle {
+        font-size: .82rem;
+        border-color: #d1dbe8;
+        color: #0E2841;
+      }
+      .column-picker .dropdown-menu {
+        padding: .55rem .65rem;
+        border: 1px solid #d1dbe8;
+        border-radius: 8px;
+        box-shadow: 0 6px 18px rgba(0,0,0,.08);
+        min-width: 220px;
+      }
+      .column-picker .form-check {
+        margin-bottom: .35rem;
+      }
+      .column-picker .form-check:last-child {
+        margin-bottom: 0;
+      }
+      .column-picker .form-check-label {
+        font-size: .78rem;
+        color: #1f3249;
+      }
+      .col-hidden {
+        display: none !important;
+      }
       #track-table td {
         word-break: normal;
         overflow-wrap: break-word;
@@ -79,8 +129,11 @@
       #track-table th:nth-child(2), #track-table td:nth-child(2) { width: 120px; }
       #track-table th:nth-child(3), #track-table td:nth-child(3) { width: 180px; }
       #track-table th:nth-child(4), #track-table td:nth-child(4) { width: 100px; }
-      #track-table th:nth-child(5), #track-table td:nth-child(5) { width: 95px; }
-      #track-table th:nth-child(11), #track-table td:nth-child(11) { width: 110px; }
+      #track-table th:nth-child(5), #track-table td:nth-child(5) { width: 124px; }
+      #track-table th:nth-child(11), #track-table td:nth-child(11) { width: 220px; }
+      #track-table td.col-status {
+        white-space: nowrap;
+      }
       .col-status .badge-status {
         white-space: nowrap;
         display: inline-block;
@@ -109,6 +162,13 @@
         <select id="filter-status" class="form-select" style="max-width:200px" onchange="filterTable()">
           <option value="">All Statuses</option>
         </select>
+        <div class="dropdown column-picker">
+          <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"
+                  data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+            Columns
+          </button>
+          <div class="dropdown-menu" id="column-picker-menu"></div>
+        </div>
       </div>
 
       <div class="section-card">
@@ -129,17 +189,17 @@
           <table class="table table-hover align-middle" id="track-table">
             <thead>
               <tr>
-                <th style="width:40px">#</th>
-                <th>Agreement ID</th>
-                <th>Name / Description</th>
-                <th class="col-type">Type</th>
-                <th class="col-status">Status</th>
-                <th>Author</th>
-                <th>Start Date</th>
-                <th>End Date</th>
-                <th>Service Owner</th>
-                <th>eApprovals</th>
-                <th style="width:110px">Actions</th>
+                <th data-col="rownum" style="width:40px">#</th>
+                <th data-col="agreement_id">Agreement ID</th>
+                <th data-col="name">Name / Description</th>
+                <th data-col="type" class="col-type">Type</th>
+                <th data-col="status" class="col-status">Status</th>
+                <th data-col="author">Author</th>
+                <th data-col="start_date">Start Date</th>
+                <th data-col="end_date">End Date</th>
+                <th data-col="service_owner">Service Owner</th>
+                <th data-col="eapprovals">eApprovals</th>
+                <th data-col="actions" style="width:220px">Actions</th>
               </tr>
             </thead>
             <tbody id="track-tbody">
@@ -157,39 +217,39 @@
                   ] | join(' ') | lower }}"
                   data-cluster="{{ cluster_abbr | lower }}"
                   data-status="{{ row.get('STATUS','') | lower }}">
-                <td class="text-muted" style="font-size:.75rem">{{ row.id }}</td>
-                <td>
+                <td data-col="rownum" class="text-muted" style="font-size:.75rem">{{ row.id }}</td>
+                <td data-col="agreement_id">
                   <a href="{{ url_for('edit', id=row.id) }}"
                      style="font-family:'Courier New',monospace;font-size:.82rem;font-weight:600;color:#156082;text-decoration:none;"
                      title="Click to edit">
                     {{ row.get('AGREEMENT_ID') or '—' }}
                   </a>
                 </td>
-                <td style="max-width:180px">
+                <td data-col="name" style="max-width:180px">
                   <a href="{{ url_for('edit', id=row.id) }}"
                      class="text-truncate d-block" title="{{ row.get('AGREEMENT_NAME_DESCRIPTION','') }}"
                      style="color:#0E2841;text-decoration:none;">
                     {{ row.get('AGREEMENT_NAME_DESCRIPTION') or '—' }}
                   </a>
                 </td>
-                <td class="col-type">{{ row.get('AGREEMENT_TYPE') or '—' }}</td>
-                <td class="col-status">
+                <td data-col="type" class="col-type">{{ row.get('AGREEMENT_TYPE') or '—' }}</td>
+                <td data-col="status" class="col-status">
                   {% set status = row.get('STATUS','') | lower %}
-                  {% if 'active' in status %}
-                    <span class="badge-status badge-active">{{ row.get('STATUS') }}</span>
-                  {% elif 'inactive' in status or 'expired' in status or 'closed' in status %}
+                  {% if 'inactive' in status or 'expired' in status or 'closed' in status %}
                     <span class="badge-status badge-inactive">{{ row.get('STATUS') }}</span>
                   {% elif 'pending' in status or 'draft' in status %}
                     <span class="badge-status badge-pending">{{ row.get('STATUS') }}</span>
+                  {% elif 'active' in status %}
+                    <span class="badge-status badge-active">{{ row.get('STATUS') }}</span>
                   {% else %}
                     <span class="badge-status badge-default">{{ row.get('STATUS') or '—' }}</span>
                   {% endif %}
                 </td>
-                <td>{{ row.get('AGREEMENT_AUTHOR') or '—' }}</td>
-                <td style="white-space:nowrap">{{ row.get('START_DATE_YYYY_MM_DD') or '—' }}</td>
-                <td style="white-space:nowrap">{{ row.get('END_DATE_YYYY_MM_DD') or '—' }}</td>
-                <td>{{ row.get('SERVICE_OWNER') or '—' }}</td>
-                <td style="max-width:150px">
+                <td data-col="author">{{ row.get('AGREEMENT_AUTHOR') or '—' }}</td>
+                <td data-col="start_date" style="white-space:nowrap">{{ row.get('START_DATE_YYYY_MM_DD') or '—' }}</td>
+                <td data-col="end_date" style="white-space:nowrap">{{ row.get('END_DATE_YYYY_MM_DD') or '—' }}</td>
+                <td data-col="service_owner">{{ row.get('SERVICE_OWNER') or '—' }}</td>
+                <td data-col="eapprovals" style="max-width:150px">
                   {% if package_id %}
                     <a href="https://www.eapprovals.cac.gov.on.ca/#/approval/{{ package_id }}"
                        target="_blank" rel="noopener noreferrer" class="eapprovals-link">
@@ -199,20 +259,33 @@
                     <span class="text-muted">Not populated</span>
                   {% endif %}
                 </td>
-                <td class="actions-cell">
+                <td data-col="actions" class="actions-cell">
                   <div class="d-flex gap-1">
                     <a href="{{ url_for('generate', id=row.id) }}"
-                       class="btn btn-action btn-generate" title="Download Recovery Note docx">
-                      ⬇ Doc
+                       class="btn btn-action btn-generate" title="Download Recovery Note docx" aria-label="Download Recovery Note docx">
+                      <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M12 4v10"></path>
+                        <path d="m8 10 4 4 4-4"></path>
+                        <path d="M5 19h14"></path>
+                      </svg>
+                      <span class="action-label">Doc</span>
                     </a>
                     <a href="{{ url_for('copy_submission', id=row.id) }}"
-                       class="btn btn-action btn-outline-primary" title="Create a new agreement by copying this one">
-                      ⧉ Copy
+                       class="btn btn-action btn-outline-primary" title="Create a new agreement by copying this one" aria-label="Copy agreement">
+                      <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+                        <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"></path>
+                      </svg>
+                      <span class="action-label">Copy</span>
                     </a>
                     <form method="post" action="{{ url_for('delete', id=row.id) }}"
                           onsubmit="return confirm('Delete this agreement?')">
-                      <button type="submit" class="btn btn-action btn-delete" title="Delete record">
-                        ✕
+                      <button type="submit" class="btn btn-action btn-delete" title="Delete record" aria-label="Delete record">
+                        <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                          <path d="M18 6 6 18"></path>
+                          <path d="m6 6 12 12"></path>
+                        </svg>
+                        <span class="action-label">Delete</span>
                       </button>
                     </form>
                   </div>
@@ -235,8 +308,100 @@
 
 {% block scripts %}
     <script>
+      const COLUMN_CONFIG = [
+        { key: 'rownum', label: '#' },
+        { key: 'agreement_id', label: 'Agreement ID' },
+        { key: 'name', label: 'Name / Description' },
+        { key: 'type', label: 'Type' },
+        { key: 'status', label: 'Status' },
+        { key: 'author', label: 'Author' },
+        { key: 'start_date', label: 'Start Date' },
+        { key: 'end_date', label: 'End Date' },
+        { key: 'service_owner', label: 'Service Owner' },
+        { key: 'eapprovals', label: 'eApprovals' },
+        { key: 'actions', label: 'Actions', fixed: true }
+      ];
+      const COLUMN_PREFS_KEY = 'track-visible-columns-v1';
+
+      function getDefaultVisibleColumns() {
+        return COLUMN_CONFIG.map(col => col.key);
+      }
+
+      function loadVisibleColumns() {
+        try {
+          const raw = localStorage.getItem(COLUMN_PREFS_KEY);
+          if (!raw) return getDefaultVisibleColumns();
+          const saved = JSON.parse(raw);
+          if (!Array.isArray(saved)) return getDefaultVisibleColumns();
+          return saved;
+        } catch (_) {
+          return getDefaultVisibleColumns();
+        }
+      }
+
+      function saveVisibleColumns(visibleColumns) {
+        localStorage.setItem(COLUMN_PREFS_KEY, JSON.stringify(visibleColumns));
+      }
+
+      function applyColumnVisibility(visibleColumns) {
+        const visibleSet = new Set(visibleColumns);
+        COLUMN_CONFIG.forEach(col => {
+          const shouldShow = col.fixed || visibleSet.has(col.key);
+          document.querySelectorAll(`[data-col="${col.key}"]`).forEach(cell => {
+            cell.classList.toggle('col-hidden', !shouldShow);
+          });
+        });
+      }
+
+      function buildColumnPicker() {
+        const menu = document.getElementById('column-picker-menu');
+        if (!menu) return;
+        const visibleColumns = loadVisibleColumns();
+        const visibleSet = new Set(visibleColumns);
+
+        menu.innerHTML = '';
+        COLUMN_CONFIG.forEach(col => {
+          const id = `col-toggle-${col.key}`;
+          const wrapper = document.createElement('div');
+          wrapper.className = 'form-check';
+
+          const input = document.createElement('input');
+          input.className = 'form-check-input';
+          input.type = 'checkbox';
+          input.id = id;
+          input.checked = col.fixed || visibleSet.has(col.key);
+          if (col.fixed) {
+            input.disabled = true;
+          }
+
+          input.addEventListener('change', () => {
+            const nextVisible = COLUMN_CONFIG
+              .filter(c => !c.fixed)
+              .filter(c => {
+                const checkbox = document.getElementById(`col-toggle-${c.key}`);
+                return checkbox ? checkbox.checked : true;
+              })
+              .map(c => c.key);
+            saveVisibleColumns(nextVisible);
+            applyColumnVisibility(nextVisible);
+          });
+
+          const label = document.createElement('label');
+          label.className = 'form-check-label';
+          label.setAttribute('for', id);
+          label.textContent = col.label;
+
+          wrapper.appendChild(input);
+          wrapper.appendChild(label);
+          menu.appendChild(wrapper);
+        });
+
+        applyColumnVisibility(visibleColumns);
+      }
+
       // Populate cluster and status dropdowns from actual data in the table
       (function populateFilters() {
+        buildColumnPicker();
         const rows = document.querySelectorAll('#track-tbody tr');
         const clusters = new Set();
         const statuses = new Set();
