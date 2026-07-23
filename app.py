@@ -195,6 +195,21 @@ def _current_submission_author():
     return username or "unknown"
 
 
+def _resolve_submission_agreement_id(existing_data=None):
+    """Resolve Agreement ID from form data with admin-only edit override on update."""
+    submitted_id = str(request.form.get("AGREEMENT_ID") or "").strip()
+
+    if getattr(current_user, "is_admin", False):
+        return submitted_id
+
+    if existing_data is not None:
+        original_id = str((existing_data or {}).get("AGREEMENT_ID") or "").strip()
+        if original_id:
+            return original_id
+
+    return submitted_id
+
+
 @login_manager.user_loader
 def load_user(user_id):
     try:
@@ -1663,7 +1678,9 @@ def submit():
     values = {}
     for gname, items in groups:
         for it in items:
-            if it["name"] == "AGREEMENT_AUTHOR":
+            if it["name"] == "AGREEMENT_ID":
+                v = _resolve_submission_agreement_id()
+            elif it["name"] == "AGREEMENT_AUTHOR":
                 submitted_author = request.form.get(it["name"], "").strip()
                 v = submitted_author or _current_submission_author()
             else:
@@ -1722,7 +1739,9 @@ def update(id):
     values = {}
     for gname, items in groups:
         for it in items:
-            if it["name"] == "AGREEMENT_AUTHOR":
+            if it["name"] == "AGREEMENT_ID":
+                v = _resolve_submission_agreement_id(existing_data=row[0])
+            elif it["name"] == "AGREEMENT_AUTHOR":
                 submitted_author = request.form.get(it["name"], "").strip()
                 v = submitted_author or original_author
             else:
