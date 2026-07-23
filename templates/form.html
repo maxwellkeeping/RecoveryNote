@@ -26,6 +26,7 @@
                     </label>
 
                     {% if it.compound == 'agreement_id' %}
+                      {% set aid_manual_override_on = current_user.is_admin and (request.method != 'POST' or request.form.get('_agreement_id_manual_override')) %}
                       {# Compact single-row Agreement ID builder #}
                       <div class="d-flex flex-wrap align-items-end gap-2">
                         <div style="min-width:140px">
@@ -65,11 +66,10 @@
                                  class="form-control form-control-sm masked-input"
                                  value="{{ values.get(it.name, '') }}"
                                  placeholder="← Build ID to generate"
-                                 readonly style="background:#fff">
+                                 {% if not aid_manual_override_on %}readonly{% endif %} style="background:#fff">
                         </div>
                       </div>
                       {% if current_user.is_admin %}
-                        {% set aid_manual_override_on = request.method != 'POST' or request.form.get('_agreement_id_manual_override') %}
                         <div class="mt-1">
                           <div class="form-check form-switch">
                             <input class="form-check-input" type="checkbox" id="aid-manual-override"
