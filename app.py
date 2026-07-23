@@ -71,6 +71,7 @@ LOOKUP_CONFIG_NAME = "default"
 LOOKUP_STORAGE_BACKEND_ENV = "LOOKUP_STORAGE_BACKEND"
 _lookup_file_bootstrap_attempted = False
 UPLOADS_DIR = os.path.join(APP_DIR, "uploads")
+ATTACHMENT_UNDO_SESSION_KEY = "_last_deleted_attachment"
 
 # PostgreSQL connection string — set DATABASE_URL in environment.
 # Read dynamically on each call so Key Vault references that resolve after
@@ -895,6 +896,168 @@ def save_attachments(submission_id, files, existing=None):
         out.append({"name": original, "stored": candidate})
 
     return out
+
+
+def _normalize_attachments(attachments):
+    """Return attachment metadata in a predictable [{name, stored}] shape."""
+    normalized = []
+    if not isinstance(attachments, list):
+        return normalized
+
+    for item in attachments:
+        if not isinstance(item, dict):
+            continue
+        stored = str(item.get("stored") or "").strip()
+        if not stored:
+            continue
+        name = str(item.get("name") or "").strip() or stored
+        normalized.append({"name": name, "stored": stored})
+
+    return normalized
+
+
+def remove_attachments(submission_id, existing, remove_stored_names):
+    """Remove selected attachment files and return updated metadata + removed count."""
+    existing_list = _normalize_attachments(existing)
+    remove_set = {
+        str(name).strip()
+        for name in (remove_stored_names or [])
+        if str(name).strip()
+    }
+    if not remove_set:
+        return existing_list, 0
+
+    try:
+        target_dir = _submission_upload_dir(submission_id)
+    except ValueError:
+        target_dir = None
+
+    kept = []
+    removed_count = 0
+    for item in existing_list:
+        stored = item["stored"]
+        if stored not in remove_set:
+            kept.append(item)
+            continue
+
+        removed_count += 1
+        if target_dir:
+            file_path = safe_join(target_dir, stored)
+            if file_path and os.path.isfile(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+
+    return kept, removed_count
+
+
+def _archive_attachment_file(submission_id, stored_name):
+    """Move an attachment to a per-submission trash location for undo support."""
+    stored = os.path.basename(str(stored_name or "").strip())
+    if not stored:
+        return None
+
+    try:
+        target_dir = _submission_upload_dir(submission_id)
+    except ValueError:
+        return None
+
+    source_path = safe_join(target_dir, stored)
+    if not source_path or not os.path.isfile(source_path):
+        return None
+
+    trash_dir = os.path.join(target_dir, ".trash")
+    os.makedirs(trash_dir, exist_ok=True)
+
+    stem, ext = os.path.splitext(stored)
+    archived = stored
+    n = 1
+    archive_path = safe_join(trash_dir, archived)
+    while archive_path and os.path.exists(archive_path):
+        archived = f"{stem}_{n}{ext}"
+        archive_path = safe_join(trash_dir, archived)
+        n += 1
+
+    if not archive_path:
+        return None
+
+    try:
+        os.replace(source_path, archive_path)
+    except OSError:
+        return None
+
+    return archived
+
+
+def _restore_archived_attachment_file(submission_id, stored_name, archived_name):
+    """Restore a previously archived attachment and return the restored filename."""
+    stored = os.path.basename(str(stored_name or "").strip())
+    archived = os.path.basename(str(archived_name or "").strip())
+    if not stored or not archived:
+        return None
+
+    try:
+        target_dir = _submission_upload_dir(submission_id)
+    except ValueError:
+        return None
+
+    trash_dir = os.path.join(target_dir, ".trash")
+    archived_path = safe_join(trash_dir, archived)
+    if not archived_path or not os.path.isfile(archived_path):
+        return None
+
+    stem, ext = os.path.splitext(stored)
+    restored = stored
+    n = 1
+    restored_path = safe_join(target_dir, restored)
+    while restored_path and os.path.exists(restored_path):
+        restored = f"{stem}_{n}{ext}"
+        restored_path = safe_join(target_dir, restored)
+        n += 1
+
+    if not restored_path:
+        return None
+
+    try:
+        os.replace(archived_path, restored_path)
+    except OSError:
+        return None
+
+    return restored
+
+
+def _undo_attachment_payload(submission_id):
+    """Return normalized undo payload for a submission or None."""
+    raw = session.get(ATTACHMENT_UNDO_SESSION_KEY)
+    if not isinstance(raw, dict):
+        return None
+
+    try:
+        payload_id = int(raw.get("submission_id"))
+    except (TypeError, ValueError):
+        return None
+    if payload_id != int(submission_id):
+        return None
+
+    attachment = raw.get("attachment")
+    if not isinstance(attachment, dict):
+        return None
+
+    stored = str(attachment.get("stored") or "").strip()
+    if not stored:
+        return None
+    name = str(attachment.get("name") or "").strip() or stored
+
+    archived = str(raw.get("archived") or "").strip()
+    if not archived:
+        return None
+
+    return {
+        "submission_id": payload_id,
+        "attachment": {"name": name, "stored": stored},
+        "archived": archived,
+    }
 
 
 def _norm_label(s):
@@ -1884,7 +2047,12 @@ def form():
             values["COMMENTS"] = build_comments_text(values)
         flash("Copy loaded. Update the new Agreement ID before saving.", "info")
     return render_template(
-        "form.html", groups=groups, values=values, edit_index=None, attachments=[]
+        "form.html",
+        groups=groups,
+        values=values,
+        edit_index=None,
+        attachments=[],
+        undo_attachment=None,
     )
 
 
@@ -1907,13 +2075,15 @@ def edit(id):
     values = dict(row[0]) if isinstance(row[0], dict) else {}
     if not (values.get("COMMENTS") or "").strip():
         values["COMMENTS"] = build_comments_text(values)
-    attachments = values.get("_attachments", [])
+    attachments = _normalize_attachments(values.get("_attachments", []))
+    undo_payload = _undo_attachment_payload(id)
     return render_template(
         "form.html",
         groups=groups,
         values=values,
         edit_index=id,
         attachments=attachments,
+        undo_attachment=undo_payload["attachment"] if undo_payload else None,
     )
 
 
@@ -1980,6 +2150,95 @@ def update(id):
     if row is None:
         flash("Submission not found.", "danger")
         return redirect(url_for("track"))
+
+    # Attachment-only action paths from edit UI. Skip full form validation/update.
+    existing_attachments = _normalize_attachments(row[0].get("_attachments", []))
+
+    undo_now = str(request.form.get("_undo_attachment_delete") or "").strip()
+    if undo_now:
+        undo_payload = _undo_attachment_payload(id)
+        if not undo_payload:
+            flash("Nothing to undo.", "warning")
+            return redirect(url_for("edit", id=id))
+
+        restored_stored = _restore_archived_attachment_file(
+            id,
+            undo_payload["attachment"]["stored"],
+            undo_payload["archived"],
+        )
+        session.pop(ATTACHMENT_UNDO_SESSION_KEY, None)
+
+        if not restored_stored:
+            flash("Unable to restore the deleted attachment.", "warning")
+            return redirect(url_for("edit", id=id))
+
+        values = dict(row[0]) if isinstance(row[0], dict) else {}
+        updated_attachments = _normalize_attachments(values.get("_attachments", []))
+        restored_attachment = {
+            "name": undo_payload["attachment"]["name"],
+            "stored": restored_stored,
+        }
+        if not any(a.get("stored") == restored_stored for a in updated_attachments):
+            updated_attachments.append(restored_attachment)
+
+        if updated_attachments:
+            values["_attachments"] = updated_attachments
+        else:
+            values.pop("_attachments", None)
+
+        with db_cursor() as cur:
+            cur.execute(
+                "UPDATE submissions SET data = %s WHERE id = %s",
+                (json.dumps(values), id),
+            )
+        flash("Attachment restored.", "success")
+        return redirect(url_for("edit", id=id))
+
+    delete_now = str(request.form.get("_delete_attachment") or "").strip()
+    if delete_now:
+        removed_attachment = next(
+            (a for a in existing_attachments if a.get("stored") == delete_now),
+            None,
+        )
+        if not removed_attachment:
+            flash("Attachment not found.", "warning")
+            return redirect(url_for("edit", id=id))
+
+        archived_name = _archive_attachment_file(id, removed_attachment["stored"])
+        if not archived_name:
+            # Fall back to hard-delete if archival fails.
+            _, removed_count = remove_attachments(id, [removed_attachment], [delete_now])
+            if not removed_count:
+                flash("Attachment not found.", "warning")
+                return redirect(url_for("edit", id=id))
+
+        remaining = [
+            a for a in existing_attachments if a.get("stored") != removed_attachment["stored"]
+        ]
+        values = dict(row[0]) if isinstance(row[0], dict) else {}
+        if remaining:
+            values["_attachments"] = remaining
+        else:
+            values.pop("_attachments", None)
+        with db_cursor() as cur:
+            cur.execute(
+                "UPDATE submissions SET data = %s WHERE id = %s",
+                (json.dumps(values), id),
+            )
+
+        if archived_name:
+            session[ATTACHMENT_UNDO_SESSION_KEY] = {
+                "submission_id": id,
+                "attachment": removed_attachment,
+                "archived": archived_name,
+            }
+            flash("Attachment removed. You can undo this action below.", "success")
+        else:
+            session.pop(ATTACHMENT_UNDO_SESSION_KEY, None)
+            flash("Attachment removed.", "success")
+
+        return redirect(url_for("edit", id=id))
+
     groups = load_field_groups()
     original_author = str(row[0].get("AGREEMENT_AUTHOR") or "").strip() or _current_submission_author()
     missing = []
@@ -1997,23 +2256,30 @@ def update(id):
             if it["required"] and v == "":
                 missing.append(it["label"])
     if missing:
+        undo_payload = _undo_attachment_payload(id)
         flash("Missing required fields: " + ", ".join(missing), "danger")
         return render_template(
             "form.html",
             groups=groups,
             values=values,
             edit_index=id,
-            attachments=row[0].get("_attachments", []),
+            attachments=existing_attachments,
+            undo_attachment=undo_payload["attachment"] if undo_payload else None,
         )
 
     if not (values.get("COMMENTS") or "").strip():
         values["COMMENTS"] = build_comments_text(values)
     values["_created_at"] = row[0].get("_created_at", date.today().isoformat())
     _apply_status_tracking(row[0], values)
+    existing_after_remove, removed_count = remove_attachments(
+        id,
+        existing_attachments,
+        request.form.getlist("remove_attachments"),
+    )
     attachments = save_attachments(
         id,
         request.files.getlist("attachments"),
-        existing=row[0].get("_attachments", []),
+        existing=existing_after_remove,
     )
     if attachments:
         values["_attachments"] = attachments
@@ -2021,6 +2287,9 @@ def update(id):
         cur.execute(
             "UPDATE submissions SET data = %s WHERE id = %s", (json.dumps(values), id)
         )
+    if removed_count:
+        noun = "attachment" if removed_count == 1 else "attachments"
+        flash(f"Removed {removed_count} {noun}.", "info")
     flash("Agreement updated.", "success")
     return redirect(url_for("track"))
 

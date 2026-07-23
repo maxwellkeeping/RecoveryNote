@@ -37,7 +37,7 @@ jobs:
         run: mypy --ignore-missing-imports app.py tests tools
 
       - name: Pytest
-        run: pytest -q --ignore=tests/test_login_playwright.py
+        run: pytest -q --ignore-glob="tests/*_playwright.py"
 
   playwright-e2e:
     runs-on: ubuntu-latest
@@ -96,7 +96,7 @@ jobs:
           exit 1
 
       - name: Run Playwright tests
-        run: pytest -q tests/test_login_playwright.py tests/test_agreement_id_playwright.py
+        run: pytest -q tests/test_login_playwright.py tests/test_agreement_id_playwright.py tests/test_attachment_delete_playwright.py
 
       - name: Upload app log on failure
         if: failure()
