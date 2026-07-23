@@ -67,6 +67,9 @@ _DATA_DIR = os.environ.get("DATA_DIR", APP_DIR)
 FG_PATH = os.path.join(_DATA_DIR, "field_groups.json")
 LOOKUP_PATH = os.path.join(_DATA_DIR, "field_lookups.json")
 LOOKUP_MAP = os.path.join(_DATA_DIR, "lookup_mappings.json")
+LOOKUP_CONFIG_NAME = "default"
+LOOKUP_STORAGE_BACKEND_ENV = "LOOKUP_STORAGE_BACKEND"
+_lookup_file_bootstrap_attempted = False
 UPLOADS_DIR = os.path.join(APP_DIR, "uploads")
 
 # PostgreSQL connection string — set DATABASE_URL in environment.
@@ -606,9 +609,39 @@ def init_db():
                 UNIQUE(provider, provider_sub)
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lookup_configs (
+                name        VARCHAR(100) PRIMARY KEY,
+                payload     JSONB NOT NULL,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_oauth_identities_user_id ON oauth_identities(user_id)"
         )
+        # Seed DB-backed lookup configuration from the JSON file once.
+        cur.execute(
+            "SELECT 1 FROM lookup_configs WHERE name = %s",
+            (LOOKUP_CONFIG_NAME,),
+        )
+        if cur.fetchone() is None:
+            seed_payload = {}
+            if os.path.exists(LOOKUP_PATH):
+                try:
+                    with open(LOOKUP_PATH, "r", encoding="utf-8") as lf:
+                        loaded = json.load(lf)
+                        if isinstance(loaded, dict):
+                            seed_payload = loaded
+                except Exception as e:
+                    print(
+                        f"WARNING: Could not seed lookup config from {LOOKUP_PATH}: {e}",
+                        file=sys.stderr,
+                    )
+            cur.execute(
+                "INSERT INTO lookup_configs (name, payload) VALUES (%s, %s)",
+                (LOOKUP_CONFIG_NAME, psycopg2.extras.Json(seed_payload)),
+            )
         # Migrate: add must_change_password column if missing (existing DBs)
         cur.execute("""
             DO $$
@@ -868,12 +901,224 @@ def _norm_label(s):
     return re.sub(r"\s+", " ", (s or "").replace("\n", " ")).strip()
 
 
-def read_lookup_config():
-    """Load lookup values and metadata from field_lookups.json."""
-    raw = {}
-    if os.path.exists(LOOKUP_PATH):
+def _lookup_storage_backend():
+    backend = (
+        os.environ.get(LOOKUP_STORAGE_BACKEND_ENV, "db") or "db"
+    ).strip().lower()
+    if backend not in {"db", "file"}:
+        backend = "db"
+    if backend == "db":
+        dsn = os.environ.get("DATABASE_URL") or DATABASE_URL
+        if not dsn:
+            return "file"
+    return backend
+
+
+def _read_lookup_raw_from_file():
+    if not os.path.exists(LOOKUP_PATH):
+        return {}
+    try:
         with open(LOOKUP_PATH, "r", encoding="utf-8") as lf:
             raw = json.load(lf)
+            return raw if isinstance(raw, dict) else {}
+    except Exception as e:
+        print(
+            f"WARNING: Could not read lookup config from {LOOKUP_PATH}: {e}",
+            file=sys.stderr,
+        )
+        return {}
+
+
+def _write_lookup_raw_to_file(payload):
+    with open(LOOKUP_PATH, "w", encoding="utf-8") as lf:
+        json.dump(payload, lf, indent=2, ensure_ascii=False)
+
+
+def _clone_json(value):
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False))
+    except Exception:
+        return value
+
+
+def _merge_lookup_option_list(existing, incoming):
+    if not isinstance(existing, list):
+        return _clone_json(incoming) if isinstance(incoming, list) else existing
+    if not isinstance(incoming, list):
+        return existing
+
+    merged = list(existing)
+    seen = {_norm_label(v) for v in existing if _norm_label(v)}
+    for item in incoming:
+        key = _norm_label(item)
+        if key and key not in seen:
+            merged.append(item)
+            seen.add(key)
+    return merged
+
+
+def _merge_lookup_dict(existing, incoming):
+    if not isinstance(existing, dict):
+        return _clone_json(incoming) if isinstance(incoming, dict) else existing
+    if not isinstance(incoming, dict):
+        return existing
+
+    merged = {k: _clone_json(v) for k, v in existing.items()}
+    for parent, incoming_children in incoming.items():
+        if parent not in merged:
+            merged[parent] = _clone_json(incoming_children)
+            continue
+        current_children = merged[parent]
+        if isinstance(current_children, list) and isinstance(incoming_children, list):
+            merged[parent] = _merge_lookup_option_list(
+                current_children, incoming_children
+            )
+    return merged
+
+
+def _merge_inactive_map(existing, incoming):
+    if not isinstance(existing, dict):
+        return _clone_json(incoming) if isinstance(incoming, dict) else existing
+    if not isinstance(incoming, dict):
+        return existing
+
+    merged = {
+        key: list(vals) if isinstance(vals, list) else _clone_json(vals)
+        for key, vals in existing.items()
+    }
+    for key, incoming_vals in incoming.items():
+        if key not in merged:
+            merged[key] = (
+                list(incoming_vals)
+                if isinstance(incoming_vals, list)
+                else _clone_json(incoming_vals)
+            )
+            continue
+        if isinstance(merged[key], list) and isinstance(incoming_vals, list):
+            merged[key] = _merge_lookup_option_list(merged[key], incoming_vals)
+    return merged
+
+
+def _merge_lookup_payload(existing_payload, incoming_payload):
+    if not isinstance(existing_payload, dict):
+        existing_payload = {}
+    if not isinstance(incoming_payload, dict):
+        return existing_payload
+
+    merged = _clone_json(existing_payload)
+    for key, incoming_value in incoming_payload.items():
+        if key not in merged:
+            merged[key] = _clone_json(incoming_value)
+            continue
+
+        current_value = merged[key]
+        if key == "_cascade_fields" and isinstance(current_value, dict) and isinstance(
+            incoming_value, dict
+        ):
+            combined = dict(current_value)
+            for child, parent in incoming_value.items():
+                combined.setdefault(child, parent)
+            merged[key] = combined
+            continue
+
+        if key == "_inactive" and isinstance(current_value, dict) and isinstance(
+            incoming_value, dict
+        ):
+            merged[key] = _merge_inactive_map(current_value, incoming_value)
+            continue
+
+        if key.startswith("_"):
+            if isinstance(current_value, list) and isinstance(incoming_value, list):
+                merged[key] = _merge_lookup_option_list(current_value, incoming_value)
+            continue
+
+        if isinstance(current_value, list) and isinstance(incoming_value, list):
+            merged[key] = _merge_lookup_option_list(current_value, incoming_value)
+        elif isinstance(current_value, dict) and isinstance(incoming_value, dict):
+            merged[key] = _merge_lookup_dict(current_value, incoming_value)
+
+    return merged
+
+
+def _read_lookup_raw_from_db(seed_from_file=True):
+    global _lookup_file_bootstrap_attempted
+
+    bootstrap_payload = {}
+    if seed_from_file and not _lookup_file_bootstrap_attempted:
+        bootstrap_payload = _read_lookup_raw_from_file()
+        _lookup_file_bootstrap_attempted = True
+
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT payload FROM lookup_configs WHERE name = %s",
+            (LOOKUP_CONFIG_NAME,),
+        )
+        row = cur.fetchone()
+
+    if row is not None:
+        payload = row[0]
+        if isinstance(payload, dict):
+            current = payload
+        elif isinstance(payload, str):
+            try:
+                parsed = json.loads(payload)
+                current = parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                current = {}
+        else:
+            current = {}
+
+        if bootstrap_payload:
+            merged = _merge_lookup_payload(current, bootstrap_payload)
+            if merged != current:
+                _write_lookup_raw_to_db(merged)
+                current = merged
+        return current
+
+    payload = (
+        bootstrap_payload
+        if bootstrap_payload
+        else (_read_lookup_raw_from_file() if seed_from_file else {})
+    )
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO lookup_configs (name, payload, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (name)
+            DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
+            """,
+            (LOOKUP_CONFIG_NAME, psycopg2.extras.Json(payload)),
+        )
+    return payload
+
+
+def _write_lookup_raw_to_db(payload):
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO lookup_configs (name, payload, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (name)
+            DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
+            """,
+            (LOOKUP_CONFIG_NAME, psycopg2.extras.Json(payload)),
+        )
+
+
+def read_lookup_config():
+    """Load lookup values and metadata from persistent storage."""
+    if _lookup_storage_backend() == "file":
+        raw = _read_lookup_raw_from_file()
+    else:
+        try:
+            raw = _read_lookup_raw_from_db(seed_from_file=True)
+        except Exception as e:
+            print(
+                f"WARNING: Could not read lookup config from database: {e}. Falling back to file.",
+                file=sys.stderr,
+            )
+            raw = _read_lookup_raw_from_file()
 
     cascade_field_map = {
         _norm_label(k): _norm_label(v)
@@ -911,8 +1156,10 @@ def write_lookup_config(lookups, cascade_field_map, inactive_map):
     if cleaned_inactive:
         payload["_inactive"] = cleaned_inactive
 
-    with open(LOOKUP_PATH, "w", encoding="utf-8") as lf:
-        json.dump(payload, lf, indent=2, ensure_ascii=False)
+    if _lookup_storage_backend() == "file":
+        _write_lookup_raw_to_file(payload)
+        return
+    _write_lookup_raw_to_db(payload)
 
 
 def _active_lookup_value(lookup_key, lookup_val, inactive_map):

@@ -3,6 +3,12 @@
 import json
 
 import app as app_module
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _force_file_lookup_backend(monkeypatch):
+    monkeypatch.setenv("LOOKUP_STORAGE_BACKEND", "file")
 
 
 def test_prepare_copy_values_resets_fields_and_sets_draft():
@@ -288,3 +294,40 @@ def test_month_number_limits_use_separate_sources(tmp_path, monkeypatch):
     assert agreement["input_max"] == "18"
     assert fiscal["placeholder"] == "1 - 12"
     assert agreement["placeholder"] == "1 - 18"
+
+
+def test_merge_lookup_payload_merges_missing_values_non_destructively():
+    existing = {
+        "STATUS": ["Draft"],
+        "SERVICE": {"PROCUREMENT-SOFTWARE": ["SOFTWARE-ORACLE"]},
+        "_cascade_fields": {"ITS SERVICE TYPE": "ITS SERVICE"},
+        "_inactive": {"STATUS": ["Closed"]},
+    }
+    incoming = {
+        "STATUS": ["Draft", "Active"],
+        "SERVICE": {
+            "PROCUREMENT-SOFTWARE": ["SOFTWARE-ORACLE", "SOFTWARE-MS"],
+            "MAINFRAME": ["MF-BASIC"],
+        },
+        "_cascade_fields": {
+            "ITS SERVICE TYPE": "ITS SERVICE",
+            "SOLUTION CI": "ITS SERVICE",
+        },
+        "_inactive": {
+            "STATUS": ["Archived"],
+            "SERVICE::PROCUREMENT-SOFTWARE": ["SOFTWARE-MS"],
+        },
+    }
+
+    merged = app_module._merge_lookup_payload(existing, incoming)
+
+    assert merged["STATUS"] == ["Draft", "Active"]
+    assert merged["SERVICE"]["PROCUREMENT-SOFTWARE"] == [
+        "SOFTWARE-ORACLE",
+        "SOFTWARE-MS",
+    ]
+    assert merged["SERVICE"]["MAINFRAME"] == ["MF-BASIC"]
+    assert merged["_cascade_fields"]["ITS SERVICE TYPE"] == "ITS SERVICE"
+    assert merged["_cascade_fields"]["SOLUTION CI"] == "ITS SERVICE"
+    assert merged["_inactive"]["STATUS"] == ["Closed", "Archived"]
+    assert merged["_inactive"]["SERVICE::PROCUREMENT-SOFTWARE"] == ["SOFTWARE-MS"]

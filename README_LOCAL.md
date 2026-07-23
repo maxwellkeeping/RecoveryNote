@@ -74,6 +74,25 @@ If needed, run another slot swap to move production back:
 az webapp deployment slot swap --name recoverynote-gyjdtex5 --resource-group rg-recoverynote-dev --slot staging --target-slot production
 ```
 
+### Lookup Reconciliation (Prod vs Staging Drift)
+If production has newer category/lookup values than staging, reconcile before first DB-backed promotion:
+
+1. Export current prod `field_lookups.json` from Kudu/SSH.
+2. Run a dry run against the target database:
+  ```sh
+  python tools/reconcile_lookup_configs.py path/to/prod_field_lookups.json --write-merged-json artifacts/merged_lookups.json
+  ```
+3. Review summary and merged output.
+4. Apply the merge:
+  ```sh
+  python tools/reconcile_lookup_configs.py path/to/prod_field_lookups.json --apply
+  ```
+
+Optional: target a specific database without changing shell env:
+```sh
+python tools/reconcile_lookup_configs.py path/to/prod_field_lookups.json --db-url "postgresql://..." --apply
+```
+
 ## Troubleshooting
 - If login fails, check `.env` and database connection.
 - Errors are logged to the console for database issues.
