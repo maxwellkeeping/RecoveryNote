@@ -181,13 +181,12 @@ def _current_submission_author():
                 )
                 row = cur.fetchone()
             if row:
-                # Prefer UPN/email to clearly identify the Entra account.
-                email = str(row[0] or "").strip()
                 display_name = str(row[1] or "").strip()
-                if email:
-                    return email
+                email = str(row[0] or "").strip()
                 if display_name:
                     return display_name
+                if email:
+                    return email
         except Exception:
             # Fallback below keeps note creation resilient if lookup fails.
             pass
@@ -1535,7 +1534,7 @@ def auth_callback():
                 claims["groups"] = at_claims.get("groups")
         if not claims:
             raise PermissionError("Microsoft sign-in returned no usable identity claims.")
-        session_author = _resolve_entra_username(claims) or _resolve_entra_display_name(
+        session_author = _resolve_entra_display_name(claims) or _resolve_entra_username(
             claims
         )
         if session_author:
@@ -1665,7 +1664,8 @@ def submit():
     for gname, items in groups:
         for it in items:
             if it["name"] == "AGREEMENT_AUTHOR":
-                v = _current_submission_author()
+                submitted_author = request.form.get(it["name"], "").strip()
+                v = submitted_author or _current_submission_author()
             else:
                 v = request.form.get(it["name"], "").strip()
             values[it["name"]] = v
@@ -1717,13 +1717,14 @@ def update(id):
         flash("Submission not found.", "danger")
         return redirect(url_for("track"))
     groups = load_field_groups()
-    original_author = row[0].get("AGREEMENT_AUTHOR") or _current_submission_author()
+    original_author = str(row[0].get("AGREEMENT_AUTHOR") or "").strip() or _current_submission_author()
     missing = []
     values = {}
     for gname, items in groups:
         for it in items:
             if it["name"] == "AGREEMENT_AUTHOR":
-                v = original_author
+                submitted_author = request.form.get(it["name"], "").strip()
+                v = submitted_author or original_author
             else:
                 v = request.form.get(it["name"], "").strip()
             values[it["name"]] = v

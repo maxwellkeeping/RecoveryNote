@@ -158,7 +158,6 @@
                              class="form-control"
                              placeholder="{{ it.placeholder or '' }}"
                              value="{{ values.get(it.name, '') }}"
-                             {% if it.name == 'AGREEMENT_AUTHOR' %}readonly{% endif %}
                              {% if it.required %}required{% endif %}>
                     {% endif %}
 

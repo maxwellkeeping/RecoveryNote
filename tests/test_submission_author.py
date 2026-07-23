@@ -29,7 +29,7 @@ def _minimal_groups_with_status():
     ]
 
 
-def test_submit_sets_author_from_logged_in_user(monkeypatch):
+def test_submit_allows_author_override(monkeypatch):
     state = {"inserted_payload": None}
 
     @contextmanager
@@ -67,10 +67,10 @@ def test_submit_sets_author_from_logged_in_user(monkeypatch):
         response = app_module.submit.__wrapped__()
 
     assert response.status_code == 302
-    assert state["inserted_payload"]["AGREEMENT_AUTHOR"] == "creator.user"
+    assert state["inserted_payload"]["AGREEMENT_AUTHOR"] == "tampered.user"
 
 
-def test_update_keeps_original_author(monkeypatch):
+def test_update_allows_author_override(monkeypatch):
     state = {
         "existing": {
             "AGREEMENT_AUTHOR": "initial.creator",
@@ -116,10 +116,10 @@ def test_update_keeps_original_author(monkeypatch):
         response = app_module.update.__wrapped__(7)
 
     assert response.status_code == 302
-    assert state["updated_payload"]["AGREEMENT_AUTHOR"] == "initial.creator"
+    assert state["updated_payload"]["AGREEMENT_AUTHOR"] == "tampered.user"
 
 
-def test_current_submission_author_prefers_entra_email(monkeypatch):
+def test_current_submission_author_prefers_entra_display_name(monkeypatch):
     class DummyUser:
         id = 77
         username = "fallback.local.user"
@@ -141,10 +141,10 @@ def test_current_submission_author_prefers_entra_email(monkeypatch):
     monkeypatch.setattr(app_module, "current_user", DummyUser())
     monkeypatch.setattr(app_module, "db_cursor", _db_cursor_entra_identity)
 
-    assert app_module._current_submission_author() == "person.user@ontario.ca"
+    assert app_module._current_submission_author() == "Person User"
 
 
-def test_submit_uses_entra_email_as_author(monkeypatch):
+def test_submit_uses_entra_display_name_when_author_blank(monkeypatch):
     class DummyUser:
         id = 88
         username = "fallback.local.user"
@@ -179,12 +179,12 @@ def test_submit_uses_entra_email_as_author(monkeypatch):
     with app_module.app.test_request_context(
         "/submit",
         method="POST",
-        data={"AGREEMENT_AUTHOR": "tampered.user", "COMMENTS": "hello"},
+        data={"AGREEMENT_AUTHOR": "", "COMMENTS": "hello"},
     ):
         response = app_module.submit.__wrapped__()
 
     assert response.status_code == 302
-    assert state["inserted_payload"]["AGREEMENT_AUTHOR"] == "creator.entra@ontario.ca"
+    assert state["inserted_payload"]["AGREEMENT_AUTHOR"] == "Creator Entra"
 
 
 def test_current_submission_author_prefers_session_entra_author(monkeypatch):
