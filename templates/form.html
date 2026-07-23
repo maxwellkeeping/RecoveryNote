@@ -192,16 +192,7 @@
           <div class="card-body">
             <label class="form-label" for="attachments">Add Attachments (optional)</label>
             <input type="file" id="attachments" name="attachments" class="form-control" multiple>
-            <div class="hint-text">You can upload multiple files. On edit, use Delete now for immediate removal or check Remove and save to remove in bulk.</div>
-
-            {% if edit_index and undo_attachment %}
-              <div class="alert alert-warning py-2 px-3 mt-2 mb-2 d-flex flex-wrap align-items-center gap-2" role="alert">
-                <span class="me-auto">Deleted <strong>{{ undo_attachment['name'] }}</strong>.</span>
-                <button type="submit" class="btn btn-sm btn-warning" name="_undo_attachment_delete" value="1" formnovalidate>
-                  Undo last delete
-                </button>
-              </div>
-            {% endif %}
+            <div class="hint-text">You can upload multiple files. On edit, existing files stay unless you mark Remove and update.</div>
 
             {% if edit_index and attachments %}
               <div class="mt-2">
@@ -211,16 +202,6 @@
                     <li>
                       <div class="d-flex flex-wrap align-items-center gap-2">
                         <a href="{{ url_for('download_attachment', id=edit_index, filename=a['stored']) }}">{{ a['name'] }}</a>
-                        <button
-                          type="submit"
-                          class="btn btn-sm btn-outline-danger py-0 px-2 delete-attachment-now"
-                          name="_delete_attachment"
-                          value="{{ a['stored'] }}"
-                          formnovalidate
-                          onclick="return confirm('Delete this attachment now?');"
-                        >
-                          Delete now
-                        </button>
                         <div class="form-check mb-0">
                           <input
                             class="form-check-input"

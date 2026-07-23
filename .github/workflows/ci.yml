@@ -96,7 +96,7 @@ jobs:
           exit 1
 
       - name: Run Playwright tests
-        run: pytest -q tests/test_login_playwright.py tests/test_agreement_id_playwright.py tests/test_attachment_delete_playwright.py
+        run: pytest -q tests/test_login_playwright.py tests/test_agreement_id_playwright.py
 
       - name: Upload app log on failure
         if: failure()
