@@ -665,8 +665,6 @@ def init_db():
                 s.data->>'AGREEMENT_TYPE'                  AS agreement_type,
                 s.data->>'AGREEMENT_AUTHOR'                AS agreement_author,
                 s.data->>'STATUS'                          AS status,
-                (s.data->>'_status_entered_at')::TIMESTAMPTZ AS status_entered_at,
-                s.data->'_status_history'                 AS status_history,
                 s.data->>'CLIENT_CONTACT_NAME'             AS client_contact_name,
                 s.data->>'PREVIOUS_AGREEMENT'              AS previous_agreement,
                 s.data->>'eApprovals_Package_ID_253_YYYY'  AS eapprovals_package_id,
@@ -687,7 +685,9 @@ def init_db():
                 s.data->>'SOLUTION_CI'                     AS solution_ci,
                 s.data->>'IFIS_CODE'                       AS ifis_code,
                 s.data->>'SERVICE_OWNER_CONTACT_NAME'      AS service_owner_contact_name,
-                s.data->>'COMMENTS'                        AS comments
+                s.data->>'COMMENTS'                        AS comments,
+                (s.data->>'_status_entered_at')::TIMESTAMPTZ AS status_entered_at,
+                s.data->'_status_history'                 AS status_history
             FROM submissions s;
         """)
 
