@@ -8,7 +8,8 @@
       .table > :not(caption) > * > * { padding: .4rem .45rem; }
       #track-table {
         width: 100%;
-        table-layout: fixed;
+        min-width: 1260px;
+        table-layout: auto;
       }
       .table thead th {
         background: #f7f9fc;
@@ -123,26 +124,41 @@
       }
       #track-table td {
         word-break: normal;
-        overflow-wrap: break-word;
+        overflow-wrap: normal;
+        vertical-align: middle;
       }
-      #track-table th:nth-child(1), #track-table td:nth-child(1) { width: 40px; }
-      #track-table th:nth-child(2), #track-table td:nth-child(2) { width: 120px; }
-      #track-table th:nth-child(3), #track-table td:nth-child(3) { width: 180px; }
-      #track-table th:nth-child(4), #track-table td:nth-child(4) { width: 100px; }
+      #track-table th:nth-child(1), #track-table td:nth-child(1) { width: 44px; }
+      #track-table th:nth-child(2), #track-table td:nth-child(2) { width: 175px; }
+      #track-table th:nth-child(3), #track-table td:nth-child(3) { min-width: 260px; }
+      #track-table th:nth-child(4), #track-table td:nth-child(4) { width: 110px; }
       #track-table th:nth-child(5), #track-table td:nth-child(5) { width: 124px; }
+      #track-table th:nth-child(6), #track-table td:nth-child(6) { width: 170px; }
+      #track-table th:nth-child(7), #track-table td:nth-child(7) { width: 122px; }
+      #track-table th:nth-child(8), #track-table td:nth-child(8) { width: 122px; }
+      #track-table th:nth-child(9), #track-table td:nth-child(9) { width: 170px; }
+      #track-table th:nth-child(10), #track-table td:nth-child(10) { width: 140px; }
       #track-table th:nth-child(11), #track-table td:nth-child(11) { width: 220px; }
       #track-table td.col-status {
         white-space: nowrap;
+      }
+      #track-table td[data-col="agreement_id"],
+      #track-table td[data-col="author"],
+      #track-table td[data-col="start_date"],
+      #track-table td[data-col="end_date"],
+      #track-table td[data-col="service_owner"] {
+        white-space: nowrap;
+      }
+      #track-table td[data-col="name"] {
+        white-space: normal;
       }
       .col-status .badge-status {
         white-space: nowrap;
         display: inline-block;
       }
-      .actions-cell .d-flex { flex-wrap: wrap; }
+      .actions-cell .d-flex { flex-wrap: nowrap; }
       .eapprovals-link {
         display: inline-block;
-        max-width: 140px;
-        overflow-wrap: anywhere;
+        white-space: nowrap;
       }
 {% endblock %}
 
@@ -225,7 +241,7 @@
                     {{ row.get('AGREEMENT_ID') or '—' }}
                   </a>
                 </td>
-                <td data-col="name" style="max-width:180px">
+                <td data-col="name">
                   <a href="{{ url_for('edit', id=row.id) }}"
                      class="text-truncate d-block" title="{{ row.get('AGREEMENT_NAME_DESCRIPTION','') }}"
                      style="color:#0E2841;text-decoration:none;">
@@ -249,7 +265,7 @@
                 <td data-col="start_date" style="white-space:nowrap">{{ row.get('START_DATE_YYYY_MM_DD') or '—' }}</td>
                 <td data-col="end_date" style="white-space:nowrap">{{ row.get('END_DATE_YYYY_MM_DD') or '—' }}</td>
                 <td data-col="service_owner">{{ row.get('SERVICE_OWNER') or '—' }}</td>
-                <td data-col="eapprovals" style="max-width:150px">
+                <td data-col="eapprovals">
                   {% if package_id %}
                     <a href="https://www.eapprovals.cac.gov.on.ca/#/approval/{{ package_id }}"
                        target="_blank" rel="noopener noreferrer" class="eapprovals-link">
