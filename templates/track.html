@@ -8,8 +8,7 @@
       .table > :not(caption) > * > * { padding: .4rem .45rem; }
       #track-table {
         width: 100%;
-        min-width: 1260px;
-        table-layout: auto;
+        table-layout: fixed;
       }
       .table thead th {
         background: #f7f9fc;
@@ -124,20 +123,16 @@
       }
       #track-table td {
         word-break: normal;
-        overflow-wrap: normal;
+        overflow-wrap: break-word;
         vertical-align: middle;
       }
-      #track-table th:nth-child(1), #track-table td:nth-child(1) { width: 44px; }
-      #track-table th:nth-child(2), #track-table td:nth-child(2) { width: 175px; }
-      #track-table th:nth-child(3), #track-table td:nth-child(3) { min-width: 260px; }
-      #track-table th:nth-child(4), #track-table td:nth-child(4) { width: 110px; }
-      #track-table th:nth-child(5), #track-table td:nth-child(5) { width: 124px; }
-      #track-table th:nth-child(6), #track-table td:nth-child(6) { width: 170px; }
-      #track-table th:nth-child(7), #track-table td:nth-child(7) { width: 122px; }
-      #track-table th:nth-child(8), #track-table td:nth-child(8) { width: 122px; }
-      #track-table th:nth-child(9), #track-table td:nth-child(9) { width: 170px; }
-      #track-table th:nth-child(10), #track-table td:nth-child(10) { width: 140px; }
-      #track-table th:nth-child(11), #track-table td:nth-child(11) { width: 220px; }
+      #track-table th:nth-child(1), #track-table td:nth-child(1) { width: 40px; }
+      #track-table th:nth-child(4), #track-table td:nth-child(4) { width: 94px; }
+      #track-table th:nth-child(5), #track-table td:nth-child(5) { width: 114px; }
+      #track-table th:nth-child(7), #track-table td:nth-child(7) { width: 102px; }
+      #track-table th:nth-child(8), #track-table td:nth-child(8) { width: 102px; }
+      #track-table th:nth-child(10), #track-table td:nth-child(10) { width: 120px; }
+      #track-table th:nth-child(11), #track-table td:nth-child(11) { width: 168px; }
       #track-table td.col-status {
         white-space: nowrap;
       }
@@ -151,14 +146,33 @@
       #track-table td[data-col="name"] {
         white-space: normal;
       }
+      .cell-ellipsis {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .col-status .badge-status {
         white-space: nowrap;
         display: inline-block;
       }
-      .actions-cell .d-flex { flex-wrap: nowrap; }
+      .actions-cell .d-flex { flex-wrap: wrap; }
       .eapprovals-link {
         display: inline-block;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
         white-space: nowrap;
+      }
+      @media (max-width: 1280px) {
+        .btn-action {
+          min-width: 36px;
+          width: 36px;
+          padding: 0;
+        }
+        .btn-action .action-label {
+          display: none;
+        }
       }
 {% endblock %}
 
@@ -236,8 +250,9 @@
                 <td data-col="rownum" class="text-muted" style="font-size:.75rem">{{ row.id }}</td>
                 <td data-col="agreement_id">
                   <a href="{{ url_for('edit', id=row.id) }}"
+                     class="cell-ellipsis"
                      style="font-family:'Courier New',monospace;font-size:.82rem;font-weight:600;color:#156082;text-decoration:none;"
-                     title="Click to edit">
+                     title="{{ row.get('AGREEMENT_ID') or '' }}">
                     {{ row.get('AGREEMENT_ID') or '—' }}
                   </a>
                 </td>
@@ -261,10 +276,14 @@
                     <span class="badge-status badge-default">{{ row.get('STATUS') or '—' }}</span>
                   {% endif %}
                 </td>
-                <td data-col="author">{{ row.get('AGREEMENT_AUTHOR') or '—' }}</td>
+                <td data-col="author">
+                  <span class="cell-ellipsis" title="{{ row.get('AGREEMENT_AUTHOR') or '' }}">{{ row.get('AGREEMENT_AUTHOR') or '—' }}</span>
+                </td>
                 <td data-col="start_date" style="white-space:nowrap">{{ row.get('START_DATE_YYYY_MM_DD') or '—' }}</td>
                 <td data-col="end_date" style="white-space:nowrap">{{ row.get('END_DATE_YYYY_MM_DD') or '—' }}</td>
-                <td data-col="service_owner">{{ row.get('SERVICE_OWNER') or '—' }}</td>
+                <td data-col="service_owner">
+                  <span class="cell-ellipsis" title="{{ row.get('SERVICE_OWNER') or '' }}">{{ row.get('SERVICE_OWNER') or '—' }}</span>
+                </td>
                 <td data-col="eapprovals">
                   {% if package_id %}
                     <a href="https://www.eapprovals.cac.gov.on.ca/#/approval/{{ package_id }}"
