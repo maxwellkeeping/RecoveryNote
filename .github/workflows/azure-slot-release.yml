@@ -14,8 +14,78 @@ on:
 
 permissions:
   contents: read
+
+env:
+  APP_NAME: recoverynote-gyjdtex5
+  RESOURCE_GROUP: rg-recoverynote-dev
+
 jobs:
+  refresh-staging-from-prod:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Verify production is reachable before refresh
+        run: |
+          set -euo pipefail
+          for i in {1..12}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://${APP_NAME}.azurewebsites.net/login")
+            if [ "$code" = "200" ]; then
+              echo "Production login reachable"
+              exit 0
+            fi
+            echo "Production login not ready yet (status=$code), waiting..."
+            sleep 10
+          done
+          echo "Production check failed"
+          exit 1
+
+      - name: Refresh staging baseline from production package
+        run: |
+          set -euo pipefail
+
+          PROD_CREDS=$(az webapp deployment list-publishing-credentials \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$APP_NAME" -o json)
+
+          PROD_USER=$(echo "$PROD_CREDS" | jq -r '.publishingUserName')
+          PROD_PASS=$(echo "$PROD_CREDS" | jq -r '.publishingPassword')
+
+          curl -fsS -u "$PROD_USER:$PROD_PASS" \
+            "https://${APP_NAME}.scm.azurewebsites.net/api/zip/site/wwwroot/" \
+            -o prod-wwwroot.zip
+
+          az webapp deploy \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$APP_NAME" \
+            --slot staging \
+            --src-path prod-wwwroot.zip \
+            --type zip \
+            --restart true
+
+      - name: Verify staging baseline after refresh
+        run: |
+          set -euo pipefail
+          for i in {1..12}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://${APP_NAME}-staging.azurewebsites.net/login")
+            if [ "$code" = "200" ]; then
+              echo "Staging baseline reachable"
+              exit 0
+            fi
+            echo "Staging not ready yet (status=$code), waiting..."
+            sleep 10
+          done
+          echo "Staging baseline check failed"
+          exit 1
+
   deploy-staging:
+    needs: refresh-staging-from-prod
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -26,7 +96,7 @@ jobs:
         continue-on-error: true
         uses: azure/webapps-deploy@v3
         with:
-          app-name: recoverynote-gyjdtex5
+          app-name: ${{ env.APP_NAME }}
           slot-name: staging
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_STAGING }}
 
@@ -40,21 +110,25 @@ jobs:
         if: ${{ steps.deploy_attempt_1.outcome == 'failure' }}
         uses: azure/webapps-deploy@v3
         with:
-          app-name: recoverynote-gyjdtex5
+          app-name: ${{ env.APP_NAME }}
           slot-name: staging
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_STAGING }}
 
       - name: Ensure deploy succeeded
         if: ${{ steps.deploy_attempt_1.outcome == 'failure' }}
         run: echo "Deploy succeeded on retry."
-      - name: Smoke check login page
+      - name: Smoke check staging routes
         run: |
-          for i in {1..10}; do
-            if curl -fsS "https://recoverynote-gyjdtex5-staging.azurewebsites.net/login" > /dev/null; then
-              echo "Staging smoke check passed"
+          set -euo pipefail
+          for i in {1..12}; do
+            login_code=$(curl -s -o /dev/null -w "%{http_code}" "https://${APP_NAME}-staging.azurewebsites.net/login")
+            export_code=$(curl -s -o /dev/null -w "%{http_code}" "https://${APP_NAME}-staging.azurewebsites.net/export/csv")
+            api_export_code=$(curl -s -o /dev/null -w "%{http_code}" "https://${APP_NAME}-staging.azurewebsites.net/api/export/csv")
+            if [ "$login_code" = "200" ] && { [ "$export_code" = "302" ] || [ "$export_code" = "401" ]; } && [ "$api_export_code" = "401" ]; then
+              echo "Staging smoke checks passed"
               exit 0
             fi
-            echo "Waiting for slot warm-up..."
+            echo "Waiting for slot warm-up... login=$login_code export=$export_code api_export=$api_export_code"
             sleep 10
           done
           echo "Staging smoke check failed"
@@ -78,7 +152,24 @@ jobs:
         with:
           inlineScript: |
             az webapp deployment slot swap \
-              --name recoverynote-gyjdtex5 \
-              --resource-group rg-recoverynote-dev \
+              --name "$APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
               --slot staging \
               --target-slot production
+
+      - name: Smoke check production after swap
+        run: |
+          set -euo pipefail
+          for i in {1..12}; do
+            login_code=$(curl -s -o /dev/null -w "%{http_code}" "https://${APP_NAME}.azurewebsites.net/login")
+            export_code=$(curl -s -o /dev/null -w "%{http_code}" "https://${APP_NAME}.azurewebsites.net/export/csv")
+            api_export_code=$(curl -s -o /dev/null -w "%{http_code}" "https://${APP_NAME}.azurewebsites.net/api/export/csv")
+            if [ "$login_code" = "200" ] && { [ "$export_code" = "302" ] || [ "$export_code" = "401" ]; } && [ "$api_export_code" = "401" ]; then
+              echo "Production smoke checks passed"
+              exit 0
+            fi
+            echo "Waiting for production warm-up... login=$login_code export=$export_code api_export=$api_export_code"
+            sleep 10
+          done
+          echo "Production smoke check failed"
+          exit 1

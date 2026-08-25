@@ -65,8 +65,17 @@ This repo includes a manual slot-release workflow in `.github/workflows/azure-sl
 
 ### Usage
 1. Run GitHub workflow `Azure Slot Release`.
-2. Choose `promote_to_production=false` to deploy and smoke-test staging only.
-3. Re-run with `promote_to_production=true` to swap staging to production.
+2. Workflow automatically refreshes staging from current production before each staging deploy.
+3. Choose `promote_to_production=false` to deploy and smoke-test staging only.
+4. Re-run with `promote_to_production=true` to swap staging to production.
+
+### Release Gates (applies to all future changes)
+- Production pre-check: `/login` must be reachable before refresh.
+- Staging baseline refresh: staging is rebuilt from current production package first.
+- Staging post-refresh check: `/login` must be reachable.
+- Staging post-deploy smoke checks: `/login`, `/export/csv`, and `/api/export/csv` must return expected status codes.
+- Production post-swap smoke checks: `/login`, `/export/csv`, and `/api/export/csv` must return expected status codes.
+- Any gate failure stops the workflow and blocks promotion.
 
 ### Rollback
 If needed, run another slot swap to move production back:
